@@ -1,0 +1,5 @@
+cfn-lint==1.57.1
+checkov==3.3.23
+semgrep==1.179.0
+PyYAML==6.0.3
+boto3==1.35.49

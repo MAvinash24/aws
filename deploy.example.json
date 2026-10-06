@@ -1,0 +1,11 @@
+{
+  "region": "ap-south-1",
+  "expected_account": "REPLACE_WITH_YOUR_12_DIGIT_ACCOUNT_ID",
+  "project": "devsecops-demo",
+  "vpc_id": "REPLACE_WITH_VPC_ID",
+  "subnet_id": "REPLACE_WITH_PUBLIC_SUBNET_ID",
+  "instance_type": "t3.micro",
+  "github_repository": "MAvinash24/aws",
+  "github_branch": "main",
+  "connection_arn": "REPLACE_WITH_AVAILABLE_CODECONNECTION_ARN"
+}

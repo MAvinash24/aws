@@ -1,0 +1,14 @@
+{
+  "python": {
+    "tag": "3.12-alpine3.23",
+    "image": "library/python@sha256:9ce5a4e59b833c002e1c4196c60ec0b38977e3235d626298ba7ffe2e64f5a30c"
+  },
+  "falco": {
+    "tag": "0.45.0",
+    "image": "falcosecurity/falco@sha256:534ff7d87c45eb1d5203aaa6870d22637b6eab899deb0edd34323c7dc1bb8885"
+  },
+  "registry_test": {
+    "tag": "3",
+    "image": "library/registry@sha256:21078ecfcba8a0cd7e1a384f75b3509899661dd21823bf1da21b5a4674aaceb9"
+  }
+}

@@ -1,0 +1,22 @@
+rules:
+  - id: prohibit-shell-command
+    languages: [python]
+    message: Never pass untrusted data to a shell. Use argument arrays without shell=True.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.$FUNC(..., shell=True, ...)
+          - pattern: os.system(...)
+          - pattern: os.popen(...)
+  - id: prohibit-dynamic-python
+    languages: [python]
+    message: Dynamic Python evaluation is prohibited in this demo.
+    severity: ERROR
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+  - id: prohibit-disabled-tls
+    languages: [python]
+    message: TLS verification must remain enabled.
+    severity: ERROR
+    pattern: requests.$FUNC(..., verify=False, ...)

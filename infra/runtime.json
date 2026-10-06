@@ -1,0 +1,280 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Single EC2 ECS host, no inbound ports, app starts only after signature verification.",
+  "Parameters": {
+    "ProjectName": {
+      "Type": "String",
+      "Default": "devsecops-demo",
+      "AllowedPattern": "[a-z][a-z0-9-]{2,23}"
+    },
+    "VpcId": {
+      "Type": "AWS::EC2::VPC::Id"
+    },
+    "SubnetId": {
+      "Type": "AWS::EC2::Subnet::Id",
+      "Description": "Public subnet with internet route; no NAT gateway is created."
+    },
+    "HostProfileArn": {
+      "Type": "String"
+    },
+    "ExecutionRoleArn": {
+      "Type": "String"
+    },
+    "TaskRoleArn": {
+      "Type": "String"
+    },
+    "InstanceType": {
+      "Type": "String",
+      "Default": "t3.micro",
+      "AllowedValues": [
+        "t3.micro",
+        "t3.small"
+      ]
+    },
+    "EcsAmi": {
+      "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+      "Default": "/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id"
+    },
+    "InitialImage": {
+      "Type": "String",
+      "Description": "ECR URI placeholder; service DesiredCount is zero until verified deployment."
+    },
+    "FalcoImage": {
+      "Type": "String",
+      "Default": "falcosecurity/falco:0.45.0",
+      "Description": "Pin a verified Falco digest before live setup."
+    }
+  },
+  "Resources": {
+    "Cluster": {
+      "Type": "AWS::ECS::Cluster",
+      "Properties": {
+        "ClusterName": {
+          "Ref": "ProjectName"
+        },
+        "ClusterSettings": [
+          {
+            "Name": "containerInsights",
+            "Value": "disabled"
+          }
+        ]
+      }
+    },
+    "HostSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "No inbound access. Use SSM port forwarding.",
+        "VpcId": {
+          "Ref": "VpcId"
+        },
+        "SecurityGroupIngress": [],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "HTTPS to AWS APIs and image registries"
+          }
+        ]
+      }
+    },
+    "HostTemplate": {
+      "Type": "AWS::EC2::LaunchTemplate",
+      "Properties": {
+        "LaunchTemplateData": {
+          "ImageId": {
+            "Ref": "EcsAmi"
+          },
+          "InstanceType": {
+            "Ref": "InstanceType"
+          },
+          "IamInstanceProfile": {
+            "Arn": {
+              "Ref": "HostProfileArn"
+            }
+          },
+          "MetadataOptions": {
+            "HttpTokens": "required",
+            "HttpEndpoint": "enabled",
+            "HttpPutResponseHopLimit": 1
+          },
+          "BlockDeviceMappings": [
+            {
+              "DeviceName": "/dev/xvda",
+              "Ebs": {
+                "Encrypted": true,
+                "VolumeType": "gp3",
+                "VolumeSize": 30,
+                "DeleteOnTermination": true
+              }
+            }
+          ],
+          "NetworkInterfaces": [
+            {
+              "DeviceIndex": 0,
+              "AssociatePublicIpAddress": true,
+              "Groups": [
+                {
+                  "Ref": "HostSecurityGroup"
+                }
+              ]
+            }
+          ],
+          "CreditSpecification": {
+            "CpuCredits": "standard"
+          },
+          "UserData": {
+            "Fn::Base64": {
+              "Fn::Sub": "#!/bin/bash\nset -Eeuo pipefail\ncat >> /etc/ecs/ecs.config <<'ECS'\nECS_CLUSTER=${ProjectName}\nECS_AWSVPC_BLOCK_IMDS=true\nECS_ENABLE_TASK_IAM_ROLE=true\nECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=false\nECS\n# Prevent bridge-network application tasks from reaching the instance role.\ncat > /etc/systemd/system/project-imds-block.service <<'IMDS'\n[Unit]\nDescription=Block application access to host instance credentials\nAfter=docker.service\nRequires=docker.service\nBefore=ecs.service\n[Service]\nType=oneshot\nExecStart=/bin/bash -c '/usr/sbin/iptables -C DOCKER-USER -i docker+ -d 169.254.169.254/32 -j DROP || /usr/sbin/iptables -I DOCKER-USER -i docker+ -d 169.254.169.254/32 -j DROP'\nRemainAfterExit=yes\n[Install]\nWantedBy=multi-user.target\nIMDS\nsystemctl daemon-reload\nsystemctl enable --now project-imds-block\nmkdir -p /etc/falco\ncat > /etc/falco/project_rules.yaml <<'RULES'\n- rule: Demo shell in application container\n  desc: Demonstration of unexpected shell execution in a container\n  condition: spawned_process and container and proc.name in (sh, bash, dash, zsh)\n  output: \"Unexpected shell in container (user=%user.name command=%proc.cmdline container=%container.id)\"\n  priority: WARNING\n  tags: [process, container, demo]\nRULES\ncat > /etc/systemd/system/project-falco.service <<'UNIT'\n[Unit]\nDescription=DevSecOps Falco runtime monitor\nAfter=docker.service network-online.target\nRequires=docker.service\n[Service]\nRestart=always\nRestartSec=15\nExecStartPre=-/usr/bin/docker rm -f project-falco\nExecStart=/usr/bin/docker run --name project-falco --cap-drop ALL --cap-add SYS_ADMIN --cap-add SYS_RESOURCE --cap-add SYS_PTRACE --security-opt no-new-privileges --memory 384m --mount type=bind,source=/sys/kernel/tracing,target=/sys/kernel/tracing,readonly --mount type=bind,source=/var/run/docker.sock,target=/host/var/run/docker.sock --mount type=bind,source=/proc,target=/host/proc,readonly --mount type=bind,source=/etc,target=/host/etc,readonly --mount type=bind,source=/etc/falco/project_rules.yaml,target=/etc/falco/falco_rules.local.yaml,readonly --log-driver awslogs --log-opt awslogs-region=${AWS::Region} --log-opt awslogs-group=/devsecops/${ProjectName}/falco --log-opt awslogs-stream=host --log-opt awslogs-create-group=false ${FalcoImage} falco -o engine.kind=modern_ebpf -o json_output=true -o stdout_output.enabled=true\nExecStop=/usr/bin/docker stop project-falco\n[Install]\nWantedBy=multi-user.target\nUNIT\nsystemctl daemon-reload\nsystemctl enable --now project-falco\n"
+            }
+          }
+        }
+      }
+    },
+    "Hosts": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "MinSize": "1",
+        "MaxSize": "1",
+        "DesiredCapacity": "1",
+        "VPCZoneIdentifier": [
+          {
+            "Ref": "SubnetId"
+          }
+        ],
+        "LaunchTemplate": {
+          "LaunchTemplateId": {
+            "Ref": "HostTemplate"
+          },
+          "Version": {
+            "Fn::GetAtt": [
+              "HostTemplate",
+              "LatestVersionNumber"
+            ]
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Ref": "ProjectName"
+            },
+            "PropagateAtLaunch": true
+          }
+        ]
+      }
+    },
+    "Task": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {
+          "Ref": "ProjectName"
+        },
+        "NetworkMode": "bridge",
+        "RequiresCompatibilities": [
+          "EC2"
+        ],
+        "ExecutionRoleArn": {
+          "Ref": "ExecutionRoleArn"
+        },
+        "TaskRoleArn": {
+          "Ref": "TaskRoleArn"
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "app",
+            "Image": {
+              "Ref": "InitialImage"
+            },
+            "Essential": true,
+            "Memory": 128,
+            "Cpu": 128,
+            "User": "10001:10001",
+            "Privileged": false,
+            "ReadonlyRootFilesystem": true,
+            "LinuxParameters": {
+              "Capabilities": {
+                "Drop": [
+                  "ALL"
+                ]
+              }
+            },
+            "PortMappings": [
+              {
+                "ContainerPort": 8080,
+                "HostPort": 8080,
+                "Protocol": "tcp"
+              }
+            ],
+            "HealthCheck": {
+              "Command": [
+                "CMD",
+                "python",
+                "-c",
+                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"
+              ],
+              "Interval": 30,
+              "Timeout": 3,
+              "Retries": 3,
+              "StartPeriod": 10
+            },
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Fn::Sub": "/devsecops/${ProjectName}/app"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "app"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "Service": {
+      "Type": "AWS::ECS::Service",
+      "Properties": {
+        "ServiceName": {
+          "Ref": "ProjectName"
+        },
+        "Cluster": {
+          "Ref": "Cluster"
+        },
+        "LaunchType": "EC2",
+        "DesiredCount": 0,
+        "TaskDefinition": {
+          "Ref": "Task"
+        },
+        "DeploymentConfiguration": {
+          "MinimumHealthyPercent": 0,
+          "MaximumPercent": 100,
+          "DeploymentCircuitBreaker": {
+            "Enable": true,
+            "Rollback": true
+          }
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "ClusterName": {
+      "Value": {
+        "Ref": "Cluster"
+      }
+    },
+    "ServiceName": {
+      "Value": {
+        "Ref": "ProjectName"
+      }
+    },
+    "AutoScalingGroup": {
+      "Value": {
+        "Ref": "Hosts"
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+.venv/
+.venv-linux/
+.tools/
+__pycache__/
+*.pyc
+reports/
+dist/
+.secrets/
+*.key
+cosign.pub
+deploy.local.json
+.env
+*.zip
+Screenshot*.png

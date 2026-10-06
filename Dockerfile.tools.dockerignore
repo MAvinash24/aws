@@ -1,0 +1,6 @@
+*
+!requirements-tools.txt
+!security/
+!security/tools.lock.json
+!scripts/
+!scripts/install-binaries.py

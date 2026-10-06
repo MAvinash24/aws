@@ -1,0 +1,19 @@
+version: 0.2
+env:
+  shell: bash
+phases:
+  install:
+    commands:
+      - bash scripts/install-tools.sh
+  pre_build:
+    commands:
+      - bash scripts/security-gates.sh
+      - python scripts/validate-iam.py
+  build:
+    commands:
+      - bash scripts/build-publish.sh
+artifacts:
+  files:
+    - release.json
+    - reports/**/*
+  discard-paths: no

@@ -1,0 +1,8 @@
+repos:
+  - repo: local
+    hooks:
+      - id: security-gates
+        name: Full local security gates (Linux or WSL with Docker)
+        entry: bash scripts/security-gates.sh
+        language: system
+        pass_filenames: false

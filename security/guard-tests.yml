@@ -1,0 +1,76 @@
+- name: Reject a public unencrypted bucket
+  input:
+    Resources:
+      BadBucket:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketEncryption:
+            ServerSideEncryptionConfiguration:
+              - ServerSideEncryptionByDefault:
+                  SSEAlgorithm: NONE
+          PublicAccessBlockConfiguration:
+            BlockPublicAcls: false
+            BlockPublicPolicy: false
+            IgnorePublicAcls: false
+            RestrictPublicBuckets: false
+          VersioningConfiguration:
+            Status: Suspended
+  expectations:
+    rules:
+      encrypted_private_buckets: FAIL
+- name: Reject public SSH
+  input:
+    Resources:
+      BadGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+          SecurityGroupIngress:
+            - IpProtocol: tcp
+              FromPort: 22
+              ToPort: 22
+              CidrIp: 0.0.0.0/0
+  expectations:
+    rules:
+      no_public_ingress: FAIL
+- name: Reject a root privileged application
+  input:
+    Resources:
+      BadTask:
+        Type: AWS::ECS::TaskDefinition
+        Properties:
+          ContainerDefinitions:
+            - Name: app
+              Privileged: true
+              ReadonlyRootFilesystem: false
+              User: root
+  expectations:
+    rules:
+      hardened_application_tasks: FAIL
+- name: Reject wildcard actions even with a boundary
+  input:
+    Resources:
+      BadRole:
+        Type: AWS::IAM::Role
+        Properties:
+          PermissionsBoundary: arn:aws:iam::123456789012:policy/boundary
+          Policies:
+            - PolicyDocument:
+                Statement:
+                  - Action: ['*']
+  expectations:
+    rules:
+      boundaries_on_roles: FAIL
+- name: Reject mutable unscanned ECR
+  input:
+    Resources:
+      BadRepository:
+        Type: AWS::ECR::Repository
+        Properties:
+          ImageTagMutability: MUTABLE
+          ImageScanningConfiguration:
+            ScanOnPush: false
+          EncryptionConfiguration:
+            EncryptionType: AES256
+  expectations:
+    rules:
+      immutable_scanned_repositories: FAIL

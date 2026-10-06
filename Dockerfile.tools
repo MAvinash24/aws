@@ -1,0 +1,9 @@
+FROM library/python@sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d
+RUN apt-get update && apt-get install -y --no-install-recommends bash git ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace
+COPY requirements-tools.txt /tmp/requirements-tools.txt
+RUN --mount=type=cache,target=/root/.cache/pip python -m pip install --disable-pip-version-check --retries 8 --timeout 60 -r /tmp/requirements-tools.txt
+COPY security/tools.lock.json /workspace/security/tools.lock.json
+COPY scripts/install-binaries.py /workspace/scripts/install-binaries.py
+RUN python scripts/install-binaries.py --output /usr/local/bin
+ENTRYPOINT ["bash"]

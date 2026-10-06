@@ -1,0 +1,15 @@
+version: 0.2
+env:
+  shell: bash
+phases:
+  install:
+    commands:
+      - python3 -m pip install --disable-pip-version-check boto3==1.35.49
+      - python scripts/install-binaries.py --only cosign --output /usr/local/bin
+  build:
+    commands:
+      - python scripts/validate-iam.py
+      - python scripts/deploy.py
+artifacts:
+  files:
+    - reports/deployment.json

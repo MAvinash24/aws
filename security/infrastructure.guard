@@ -1,0 +1,39 @@
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+let repositories = Resources.*[ Type == 'AWS::ECR::Repository' ]
+let groups = Resources.*[ Type == 'AWS::EC2::SecurityGroup' ]
+let roles = Resources.*[ Type == 'AWS::IAM::Role' ]
+let tasks = Resources.*[ Type == 'AWS::ECS::TaskDefinition' ]
+let boundaries = Resources.*[ Type == 'AWS::IAM::ManagedPolicy' ]
+
+rule encrypted_private_buckets when %buckets !empty {
+    %buckets.Properties.BucketEncryption.ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm == 'AES256'
+    %buckets.Properties.PublicAccessBlockConfiguration.BlockPublicAcls == true
+    %buckets.Properties.PublicAccessBlockConfiguration.BlockPublicPolicy == true
+    %buckets.Properties.PublicAccessBlockConfiguration.IgnorePublicAcls == true
+    %buckets.Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets == true
+    %buckets.Properties.VersioningConfiguration.Status == 'Enabled'
+}
+rule immutable_scanned_repositories when %repositories !empty {
+    %repositories.Properties.ImageTagMutability == 'IMMUTABLE'
+    %repositories.Properties.ImageScanningConfiguration.ScanOnPush == true
+    %repositories.Properties.EncryptionConfiguration.EncryptionType == 'AES256'
+}
+rule no_public_ingress when %groups !empty {
+    %groups.Properties.SecurityGroupIngress empty
+}
+rule boundaries_on_roles when %roles !empty {
+    %roles.Properties.PermissionsBoundary exists
+    %roles {
+        when Properties.Policies exists {
+            Properties.Policies[*].PolicyDocument.Statement[*].Action[*] != '*'
+        }
+    }
+}
+rule hardened_application_tasks when %tasks !empty {
+    %tasks.Properties.ContainerDefinitions[*].Privileged == false
+    %tasks.Properties.ContainerDefinitions[*].ReadonlyRootFilesystem == true
+    %tasks.Properties.ContainerDefinitions[*].User == '10001:10001'
+}
+rule no_wildcard_managed_policy_actions when %boundaries !empty {
+    %boundaries.Properties.PolicyDocument.Statement[*].Action[*] != '*'
+}
