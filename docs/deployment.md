@@ -20,7 +20,7 @@ In ECR → Private registry → Scanning, confirm **BASIC** scanning. The provis
 
 In Developer Tools → Settings → Connections, create a **GitHub** connection in Mumbai and complete GitHub authorization for `MAvinash24/aws`. It must show **Available**, not Pending. Copy the `arn:aws:codeconnections:...` connection ARN. Authorize access only to the intended repository. This connection authorization grants AWS access to the repository and must be reviewed by the account owner.
 
-In Service Quotas → CodeBuild, check the **applied** “Concurrently running builds for Linux/Small environment” quota (`L-9D07B6EF`). This account currently has zero capacity across CodeBuild compute environments. A request for one Linux/Small build has been submitted and is under AWS review. No template or administrator permission can override this service quota. After AWS approves it, start a new pipeline execution and verify every stage; do not count source-stage success as a successful pipeline.
+In Service Quotas → CodeBuild, check the **applied** “Concurrently running builds for Linux/Small environment” quota (`L-9D07B6EF`). This account currently has zero capacity across CodeBuild compute environments. A request for one Linux/Small build has been submitted and is under AWS review. No template or administrator permission can override this service quota. The active GitHub Actions workflow does not use this quota. Keep the legacy pipeline disabled; do not run it concurrently with GitHub deployment.
 
 ## 3. Upload the project into CloudShell
 

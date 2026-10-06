@@ -2,6 +2,8 @@
 
 A small application and a complete AWS deployment scaffold for Problem Statement 10. GitHub repository: [MAvinash24/aws](https://github.com/MAvinash24/aws). Region: Mumbai (`ap-south-1`).
 
+**Verified live, 6 October 2026:** [GitHub Actions run 37436946485](https://github.com/MAvinash24/aws/actions/runs/37436946485) passed both jobs and deployed the signed image as ECS task revision 3. The local Docker app remains healthy on localhost:8080.
+
 **Active deployment:** GitHub Actions runs scans, builds, digest signing and signature-verified ECS deployment. AWS hosts ECR, ECS, Falco, signing parameters and CloudWatch. GitHub uses short-lived OIDC credentials with separate bounded build/deploy roles. The legacy CodeBuild pipeline is disabled because its account quota is zero. See [validation evidence](docs/validation.md) for actual run results and [PowerShell commands](docs/LOCAL-RUN-POWERSHELL.md) for the independent local app.
 
 ## Architecture
