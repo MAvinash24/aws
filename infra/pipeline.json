@@ -314,7 +314,7 @@
                     "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/${ProjectName}:*"
                   },
                   "Condition": {
-                    "Bool": {
+                    "StringEquals": {
                       "ecs:privileged": "false"
                     }
                   }

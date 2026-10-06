@@ -106,7 +106,7 @@ def generate_platform():
         statement(["iam:GetPolicy", "iam:GetPolicyVersion"], policy_arn),
         statement(["codeconnections:UseConnection"], sub("arn:${AWS::Partition}:codeconnections:${AWS::Region}:${AWS::AccountId}:connection/*")),
         statement(["codebuild:StartBuild", "codebuild:BatchGetBuilds"], sub("arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:project/${ProjectName}-*")),
-        statement(["ecs:RegisterTaskDefinition"], family, Condition={"Bool": {"ecs:privileged": "false"}}),
+        statement(["ecs:RegisterTaskDefinition"], family, Condition={"StringEquals": {"ecs:privileged": "false"}}),
         statement(["ecs:DescribeTaskDefinition"], "*"),
         statement(["ecs:DescribeServices", "ecs:UpdateService"], service),
         statement(["iam:PassRole"], role_arns, Condition={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}),
@@ -255,7 +255,7 @@ def generate_pipeline():
     r["DeployRole"] = role("codebuild.amazonaws.com", "deploy", ref("BoundaryArn"), common + iam_read + [
         statement(["ecr:GetAuthorizationToken"], "*"), statement(["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"], ref("RepositoryArn")),
         statement(["ssm:GetParameter"], sub("arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectName}/signing/public-key")),
-        statement(["ecs:RegisterTaskDefinition"], sub("arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/${ProjectName}:*"), Condition={"Bool": {"ecs:privileged": "false"}}), statement(["ecs:DescribeTaskDefinition"], "*"),
+        statement(["ecs:RegisterTaskDefinition"], sub("arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/${ProjectName}:*"), Condition={"StringEquals": {"ecs:privileged": "false"}}), statement(["ecs:DescribeTaskDefinition"], "*"),
         statement(["ecs:DescribeServices", "ecs:UpdateService"], sub("arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/${ProjectName}/${ProjectName}")),
         statement(["iam:PassRole"], [ref("ExecutionRoleArn"), ref("TaskRoleArn")], Condition={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}),
     ])
