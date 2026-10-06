@@ -267,9 +267,13 @@ def generate_pipeline():
                            Environment={"Type": "LINUX_CONTAINER", "ComputeType": "BUILD_GENERAL1_SMALL", "Image": "aws/codebuild/standard:7.0", "PrivilegedMode": privileged, "EnvironmentVariables": environment},
                            TimeoutInMinutes=30, QueuedTimeoutInMinutes=30,
                            LogsConfig={"CloudWatchLogs": {"Status": "ENABLED", "GroupName": sub("/devsecops/${ProjectName}/" + suffix)}})
-    connection_conditions = {"StringEqualsIfExists": {"codeconnections:FullRepositoryId": ref("FullRepositoryId"), "codeconnections:BranchName": ref("BranchName")},
-                             "StringEquals": {"codeconnections:ProviderAction": ["GetBranch", "GetCommit", "GetRepository", "GetUploadArchiveToS3Status", "StartUploadArchiveToS3", "GitPull"]}}
-    r["PipelineRole"] = role("codepipeline.amazonaws.com", "pipeline", ref("BoundaryArn"), common + [statement(["codeconnections:UseConnection"], ref("ConnectionArn"), Condition=connection_conditions), statement(["codebuild:StartBuild", "codebuild:BatchGetBuilds"], [att("Build"), att("Deploy")])])
+    # CodePipeline first checks UseConnection without provider-operation context.
+    # Apply contextual restrictions whenever those supported keys are supplied.
+    connection_conditions = {"StringEqualsIfExists": {
+        "codeconnections:FullRepositoryId": ref("FullRepositoryId"), "codeconnections:BranchName": ref("BranchName")}}
+    connection_write_deny = {"Effect": "Deny", "Action": ["codeconnections:UseConnection"], "Resource": ref("ConnectionArn"),
+                             "Condition": {"StringLike": {"codeconnections:ProviderAction": ["Create*", "Delete*", "Update*", "GitPush"]}}}
+    r["PipelineRole"] = role("codepipeline.amazonaws.com", "pipeline", ref("BoundaryArn"), common + [statement(["codeconnections:UseConnection"], ref("ConnectionArn"), Condition=connection_conditions), connection_write_deny, statement(["codebuild:StartBuild", "codebuild:BatchGetBuilds"], [att("Build"), att("Deploy")])])
     def action(name, provider, category, config, inputs=None, outputs=None):
         a = {"Name": name, "ActionTypeId": {"Category": category, "Owner": "AWS", "Provider": provider, "Version": "1"}, "Configuration": config, "RunOrder": 1}
         if inputs:

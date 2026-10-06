@@ -585,15 +585,24 @@
                       "codeconnections:BranchName": {
                         "Ref": "BranchName"
                       }
-                    },
-                    "StringEquals": {
+                    }
+                  }
+                },
+                {
+                  "Effect": "Deny",
+                  "Action": [
+                    "codeconnections:UseConnection"
+                  ],
+                  "Resource": {
+                    "Ref": "ConnectionArn"
+                  },
+                  "Condition": {
+                    "StringLike": {
                       "codeconnections:ProviderAction": [
-                        "GetBranch",
-                        "GetCommit",
-                        "GetRepository",
-                        "GetUploadArchiveToS3Status",
-                        "StartUploadArchiveToS3",
-                        "GitPull"
+                        "Create*",
+                        "Delete*",
+                        "Update*",
+                        "GitPush"
                       ]
                     }
                   }
