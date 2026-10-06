@@ -1,8 +1,8 @@
 # Deployment guide: Mumbai, single-account demo
 
-## 1. Finish AWS verification and prepare the repository
+## 1. Authenticate and prepare the repository
 
-AWS currently blocks CloudShell with “Your account verification is in progress”. Complete any verification steps shown by AWS. Do not create another account, switch billing plans, join an Organization, or enable paid trials to bypass it.
+Use configured AWS CLI/SDK credentials or CloudShell. Local credentials were verified and the three project stacks deployed on 6 October 2026. A CloudShell verification error does not establish whether local API access works: verify the actual setup identity. Do not create another account, switch billing plans, join an Organization, or enable paid trials to bypass account restrictions.
 
 Upload this source to `https://github.com/MAvinash24/aws` on `main`. Exclude `.venv`, `.tools`, `.secrets`, `reports`, `dist`, signing keys and local account configuration. The original assignment screenshots are reference material; they are not needed in the source repository. A private repository limits unnecessary exposure of project material.
 
@@ -17,6 +17,8 @@ In VPC, select an existing VPC and subnet with an active Internet Gateway route.
 In ECR → Private registry → Scanning, confirm **BASIC** scanning. The provisioning script refuses to alter an account currently using ENHANCED scanning. Existing registry filters may override repository scan-on-push behavior: review that the project's repository is covered by a SCAN_ON_PUSH rule. BASIC scanning is supplementary; Trivy is the deployment-blocking CVE gate.
 
 In Developer Tools → Settings → Connections, create a **GitHub** connection in Mumbai and complete GitHub authorization for `MAvinash24/aws`. It must show **Available**, not Pending. Copy the `arn:aws:codeconnections:...` connection ARN. Authorize access only to the intended repository. This connection authorization grants AWS access to the repository and must be reviewed by the account owner.
+
+In Service Quotas → CodeBuild, check the **applied** “Concurrently running builds for Linux/Small environment” quota (`L-9D07B6EF`). This account currently has zero capacity across CodeBuild compute environments. A request for one Linux/Small build has been submitted and is under AWS review. No template or administrator permission can override this service quota. After AWS approves it, start a new pipeline execution and verify every stage; do not count source-stage success as a successful pipeline.
 
 ## 3. Upload the project into CloudShell
 
@@ -57,6 +59,8 @@ With `.tools` on PATH:
 
 ```bash
 python scripts/initialize-signing.py
+# Alternatively, generate a random passphrase stored only in SSM:
+# python scripts/initialize-signing.py --generate-passphrase
 ```
 
 Enter a new passphrase directly into the terminal prompt, at least 16 characters. It is **not** your AWS password. The script generates a Cosign key pair in temporary storage and creates three standard SSM parameters:

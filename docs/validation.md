@@ -38,14 +38,34 @@ Reports are excluded from Git to keep changing machine-specific scan output out 
 
 These results apply to the checked-in source/base image and the scanner database used at validation time. Future databases or changes can fail the gate.
 
-## Live AWS verification is pending
+## Verified in AWS
 
-AWS Console sign-in in Mumbai was confirmed. CloudShell then returned:
+Local shared-profile credentials successfully authenticated to the intended account. AWS account-aware change-set validation passed before provisioning. The platform, runtime and pipeline stacks completed in Mumbai; later policy updates also completed.
 
-> Unable to create the environment. Your account verification is in progress. This may take up to two days for new accounts.
+| Check | Live result |
+|---|---|
+| GitHub connection and source retrieval | AVAILABLE connection; source stage succeeded for the repository |
+| IAM Access Analyzer | Actual six-role policies and boundary validated without errors or security warnings; ECS condition-type warning corrected |
+| Connection policy | Exact connection and repository/branch context; explicit provider-write denial. IAM simulator allows expected reads and rejects other repositories/writes |
+| ECR | AES256 encryption, immutable tags, scan-on-push; attempted replacement of an existing tag rejected with ImageTagAlreadyExistsException |
+| Initial release | Locally built and scanned image pushed to real ECR; zero detected HIGH/CRITICAL vulnerabilities or secrets; SBOM saved |
+| Signing and verification | Real ECR OCI reference signature accepted by trusted SSM public key; wrong key rejected by deployment verifier before ECS mutation |
+| ECS | Exact verified digest deployed; one running HEALTHY task, zero pending tasks; HTTP health endpoint succeeds via SSM |
+| Application hardening | UID 10001, read-only root filesystem, no privileged mode, ALL capabilities dropped; IMDS token request blocked from the application |
+| EC2/Falco | Amazon Linux 2023 modern eBPF sensor active; no OOM or restarts during checks; sensor memory approximately 57 MiB |
+| Runtime detection | Harmless shell execution in the actual application produced a Warning event in CloudWatch and the Falco alarm entered ALARM |
+| EventBridge | Native pipeline execution events delivered to the project's CloudWatch event log group |
+| Audit | CloudTrail management-event history queried; no durable trail configured |
+| CloudFormation drift | Platform and pipeline IN_SYNC. Runtime DRIFTED only at the service's desired count and task revision, which the verified deployment intentionally changed |
 
-No project AWS resources were created, and no claim is made that the AWS pipeline, IAM Access Analyzer API, ECR immutability/referrers, ECS host, SSM forwarding, actual Falco kernel detection, CloudWatch alert delivery, or drift detection has run successfully in this account.
+The initial release was deployed from the authenticated administrator's local setup session using the same signature-before-mutation verifier. **It was not produced by a successful CodeBuild execution.** Local reports contain the source SHA, image digest, task revision, scan results, signing rejection evidence and real runtime outputs.
 
-The localhost signature test verifies Cosign's real OCI signing path; it is not a substitute for an ECR integration test. Deployment tests use mocked ECS calls and cannot establish the behavior of a live AWS service. Falco publisher verification does not establish sensor/kernel compatibility or actual runtime alerts.
+The live drift check exposed a boto3 API detail: `DescribeStackResourceDrifts` returns `NextToken` but has no generated paginator. The utility now follows those tokens explicitly and preserves a separate report for each stack. Do not redeploy the runtime bootstrap template to make the drift report green: it would reset the service to zero tasks and the unsigned placeholder revision.
 
-After account verification, follow `docs/deployment.md`, authorize the GitHub connection, review/execute the three stack change sets, initialize signing trust, and record a full pipeline execution plus real Falco alert before presenting live completion.
+## Remaining AWS blocker
+
+CodeBuild returned `AccountLimitExceededException: Cannot have more than 0 builds in queue for the account`. Applied concurrency quotas are zero. The request to raise Linux/Small concurrency to one is `CASE_OPENED` and awaits AWS review. GitHub source success is established, but managed build, sign and deploy stages have not run successfully. After approval, run a fresh complete pipeline execution and replace this pending status only with its actual results.
+
+The application remains running for demonstration while review is pending. Use the documented stop command when finished to conserve credits. No billing-plan change, paid security trial, NAT gateway or load balancer was enabled.
+
+Reports include `reports/deployment.json`, `reports/bootstrap-release-summary.json`, `reports/trivy-image-bootstrap.json`, `reports/sbom-bootstrap.cdx.json`, `reports/iam-validation.json`, `reports/ecr-immutable-overwrite-live.json`, `reports/ecr-basic-scan-live.json`, `reports/wrong-signature-live.json`, `reports/application-health-hardening-live.json`, `reports/falco-application-alert-live.json`, `reports/eventbridge-delivery-live.json`, `reports/codebuild-quota-request-status.json`, and per-stack drift results.

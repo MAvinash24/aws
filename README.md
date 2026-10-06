@@ -2,7 +2,7 @@
 
 A small application and a complete AWS deployment scaffold for Problem Statement 10. GitHub repository: [MAvinash24/aws](https://github.com/MAvinash24/aws). Region: Mumbai (`ap-south-1`).
 
-**Live status:** AWS Console sign-in succeeded on 6 October 2026, but CloudShell reports that account verification is in progress and may take up to two days. No AWS resources have been created by this implementation. See [validation status](docs/validation.md) for the checks actually performed.
+**Live status, 6 October 2026:** All three stacks are deployed in Mumbai. A locally scanned, signed and verified initial release is healthy in ECS; real Falco application alerts reach CloudWatch. GitHub source retrieval works. **The managed build/deploy pipeline remains blocked by the account's zero CodeBuild concurrency quota.** A request for one Linux/Small build is awaiting AWS review. See [validation evidence](docs/validation.md); a successful end-to-end CodePipeline run has not yet been demonstrated.
 
 ## Architecture
 
@@ -67,9 +67,9 @@ Never add `--ignore-unfixed`, `|| true`, or `--exit-code 0` to get a passing dem
 
 ## Deploy
 
-Follow [deployment instructions](docs/deployment.md). The project uses an existing GitHub repository and a manually authorized GitHub CodeConnection. The source branch is `main`. Complete account verification before attempting live setup.
+Follow [deployment instructions](docs/deployment.md). The project uses an existing GitHub repository and an authorized GitHub CodeConnection. The source branch is `main`. Confirm that CodeBuild's applied Linux/Small concurrency quota is at least one before starting the managed pipeline.
 
-The container starts only after the deploying build validates IAM policies, verifies the trusted-key signature for the exact repository digest, and checks the task's hardening. The build role cannot deploy; the deploy role cannot sign or push images. Local tests explicitly check rejection and rollback behavior.
+The managed deployment stage validates IAM policies, verifies the trusted-key signature for the exact repository digest, and checks task hardening before starting the container. The initial release used the same verifier from the administrator's local setup session while CodeBuild capacity was unavailable. The build role cannot deploy; the deploy role cannot sign or push images. Local tests explicitly check rejection and rollback behavior.
 
 ## Assignment substitutions
 
