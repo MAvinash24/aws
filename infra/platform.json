@@ -1,6 +1,17 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
   "Description": "DevSecOps platform: ECR, private artifacts, bounded IAM, logs and alerts. Usage may cost money.",
+  "Metadata": {
+    "AWSToolsMetrics": {
+      "AWSAgentToolkit": "aws-cloudformation@3"
+    },
+    "com.aws.cloudformation.Context": {
+      "ref": [
+        "docs/trust-and-costs.md",
+        "docs/deployment.md"
+      ]
+    }
+  },
   "Parameters": {
     "ProjectName": {
       "Type": "String",

@@ -1,6 +1,17 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
   "Description": "Single EC2 ECS host, no inbound ports, app starts only after signature verification.",
+  "Metadata": {
+    "AWSToolsMetrics": {
+      "AWSAgentToolkit": "aws-cloudformation@3"
+    },
+    "com.aws.cloudformation.Context": {
+      "ref": [
+        "docs/trust-and-costs.md",
+        "docs/deployment.md"
+      ]
+    }
+  },
   "Parameters": {
     "ProjectName": {
       "Type": "String",

@@ -2,6 +2,7 @@
 import argparse
 import getpass
 import os
+import secrets
 import subprocess
 import tempfile
 from pathlib import Path
@@ -12,6 +13,7 @@ def main():
     from botocore.exceptions import ClientError
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("deploy.local.json"))
+    parser.add_argument("--generate-passphrase", action="store_true", help="Generate a random passphrase and store it only in SSM SecureString")
     args = parser.parse_args()
     import importlib.util
     spec = importlib.util.spec_from_file_location("provision", Path(__file__).with_name("provision.py"))
@@ -31,9 +33,12 @@ def main():
                 raise
         else:
             raise SystemExit("Signing parameter already exists; refusing to overwrite trust material")
-    password = getpass.getpass("New signing-key passphrase (not your AWS password): ")
-    if len(password) < 16 or password != getpass.getpass("Confirm passphrase: "):
-        raise SystemExit("Use matching passphrases with at least 16 characters")
+    if args.generate_passphrase:
+        password = secrets.token_urlsafe(48)
+    else:
+        password = getpass.getpass("New signing-key passphrase (not your AWS password): ")
+        if len(password) < 16 or password != getpass.getpass("Confirm passphrase: "):
+            raise SystemExit("Use matching passphrases with at least 16 characters")
     with tempfile.TemporaryDirectory() as folder:
         subprocess.run(["cosign", "generate-key-pair"], cwd=folder, env=dict(os.environ, COSIGN_PASSWORD=password), check=True)
         values = [("private-key", (Path(folder) / "cosign.key").read_text(), "SecureString"),

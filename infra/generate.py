@@ -31,6 +31,8 @@ def resource(kind, **properties):
 
 def base(description):
     return {"AWSTemplateFormatVersion": "2010-09-09", "Description": description,
+            "Metadata": {"AWSToolsMetrics": {"AWSAgentToolkit": "aws-cloudformation@3"},
+                         "com.aws.cloudformation.Context": {"ref": ["docs/trust-and-costs.md", "docs/deployment.md"]}},
             "Parameters": {"ProjectName": {"Type": "String", "Default": "devsecops-demo", "AllowedPattern": "[a-z][a-z0-9-]{2,23}"}},
             "Resources": {}, "Outputs": {}}
 
@@ -265,7 +267,9 @@ def generate_pipeline():
                            Environment={"Type": "LINUX_CONTAINER", "ComputeType": "BUILD_GENERAL1_SMALL", "Image": "aws/codebuild/standard:7.0", "PrivilegedMode": privileged, "EnvironmentVariables": environment},
                            TimeoutInMinutes=30, QueuedTimeoutInMinutes=30,
                            LogsConfig={"CloudWatchLogs": {"Status": "ENABLED", "GroupName": sub("/devsecops/${ProjectName}/" + suffix)}})
-    r["PipelineRole"] = role("codepipeline.amazonaws.com", "pipeline", ref("BoundaryArn"), common + [statement(["codeconnections:UseConnection"], ref("ConnectionArn")), statement(["codebuild:StartBuild", "codebuild:BatchGetBuilds"], [att("Build"), att("Deploy")])])
+    connection_conditions = {"StringEqualsIfExists": {"codeconnections:FullRepositoryId": ref("FullRepositoryId"), "codeconnections:BranchName": ref("BranchName")},
+                             "StringEquals": {"codeconnections:ProviderAction": ["GetBranch", "GetCommit", "GetRepository", "GetUploadArchiveToS3Status", "StartUploadArchiveToS3", "GitPull"]}}
+    r["PipelineRole"] = role("codepipeline.amazonaws.com", "pipeline", ref("BoundaryArn"), common + [statement(["codeconnections:UseConnection"], ref("ConnectionArn"), Condition=connection_conditions), statement(["codebuild:StartBuild", "codebuild:BatchGetBuilds"], [att("Build"), att("Deploy")])])
     def action(name, provider, category, config, inputs=None, outputs=None):
         a = {"Name": name, "ActionTypeId": {"Category": category, "Owner": "AWS", "Provider": provider, "Version": "1"}, "Configuration": config, "RunOrder": 1}
         if inputs:

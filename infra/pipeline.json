@@ -1,6 +1,17 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
   "Description": "GitHub connection to CodePipeline V2 with separate build and verifying deploy roles.",
+  "Metadata": {
+    "AWSToolsMetrics": {
+      "AWSAgentToolkit": "aws-cloudformation@3"
+    },
+    "com.aws.cloudformation.Context": {
+      "ref": [
+        "docs/trust-and-costs.md",
+        "docs/deployment.md"
+      ]
+    }
+  },
   "Parameters": {
     "ProjectName": {
       "Type": "String",
@@ -565,6 +576,26 @@
                   ],
                   "Resource": {
                     "Ref": "ConnectionArn"
+                  },
+                  "Condition": {
+                    "StringEqualsIfExists": {
+                      "codeconnections:FullRepositoryId": {
+                        "Ref": "FullRepositoryId"
+                      },
+                      "codeconnections:BranchName": {
+                        "Ref": "BranchName"
+                      }
+                    },
+                    "StringEquals": {
+                      "codeconnections:ProviderAction": [
+                        "GetBranch",
+                        "GetCommit",
+                        "GetRepository",
+                        "GetUploadArchiveToS3Status",
+                        "StartUploadArchiveToS3",
+                        "GitPull"
+                      ]
+                    }
                   }
                 },
                 {
