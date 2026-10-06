@@ -4,9 +4,9 @@ mkdir -p reports
 python -m unittest discover -s tests -v > reports/unit-tests.txt 2>&1
 cat reports/unit-tests.txt
 python scripts/check-project.py
-cfn-lint -t infra/platform.json infra/runtime.json infra/pipeline.json
+cfn-lint -t infra/platform.json infra/runtime.json infra/pipeline.json infra/github.json
 checkov --config-file security/checkov.yml --output json > reports/checkov.json
-for template in infra/platform.json infra/runtime.json infra/pipeline.json; do
+for template in infra/platform.json infra/runtime.json infra/pipeline.json infra/github.json; do
   cfn-guard validate --rules security/infrastructure.guard --data "$template" --show-summary all
 done
 cfn-guard test --rules-file security/infrastructure.guard --test-data security/guard-tests.yml

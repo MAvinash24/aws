@@ -37,6 +37,11 @@ def build_parameters(stage, config, outputs):
         for key in ("ArtifactBucket", "RepositoryUri", "RepositoryArn", "BoundaryArn", "ExecutionRoleArn", "TaskRoleArn"):
             result[key] = outputs[key]
         result.update({"ConnectionArn": config["connection_arn"], "FullRepositoryId": config["github_repository"], "BranchName": config["github_branch"]})
+    elif stage == "github":
+        for key in ("RepositoryArn", "BoundaryArn", "ExecutionRoleArn", "TaskRoleArn"):
+            result[key] = outputs[key]
+        result["OidcSubjectPrefix"] = config["github_oidc_subject_prefix"]
+        result["ExistingOidcProviderArn"] = config.get("github_oidc_provider_arn", "")
     return [{"ParameterKey": key, "ParameterValue": value} for key, value in result.items()]
 
 
@@ -56,7 +61,7 @@ def main():
     import boto3
     from botocore.exceptions import ClientError
     parser = argparse.ArgumentParser()
-    parser.add_argument("stage", choices=["platform", "runtime", "pipeline"])
+    parser.add_argument("stage", choices=["platform", "runtime", "pipeline", "github"])
     parser.add_argument("--config", type=Path, default=ROOT / "deploy.local.json")
     parser.add_argument("--execute", action="store_true", help="Execute the reviewed CloudFormation change set; creates billable resources")
     args = parser.parse_args()

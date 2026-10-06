@@ -17,6 +17,20 @@ def main():
     if session.client("sts").get_caller_identity()["Account"] != config["expected_account"]:
         raise SystemExit("Wrong AWS account")
     project = config["project"]
+    if config.get("ci_provider") == "github":
+        from github_api import request, active_runs
+        import time
+        repository = config["github_repository"]
+        request(repository, "workflows/deploy.yml/disable", "PUT")
+        running_github = active_runs(repository)
+        for run in running_github:
+            request(repository, f"runs/{run['id']}/cancel", "POST")
+        deadline_github = time.monotonic() + 2100
+        while running_github and time.monotonic() < deadline_github:
+            time.sleep(10)
+            running_github = active_runs(repository)
+        if running_github:
+            raise SystemExit("GitHub jobs have not stopped. No compute was scaled down; inspect Actions and retry.")
     pipeline = session.client("codepipeline")
     pipeline.disable_stage_transition(pipelineName=project, stageName="BuildScanSign", transitionType="Inbound", reason="Demo compute stopped to limit charges")
     running = []

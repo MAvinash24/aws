@@ -2,24 +2,25 @@
 
 A small application and a complete AWS deployment scaffold for Problem Statement 10. GitHub repository: [MAvinash24/aws](https://github.com/MAvinash24/aws). Region: Mumbai (`ap-south-1`).
 
-**Live status, 6 October 2026:** All three stacks are deployed in Mumbai. A locally scanned, signed and verified initial release is healthy in ECS; real Falco application alerts reach CloudWatch. GitHub source retrieval works. **The managed build/deploy pipeline remains blocked by the account's zero CodeBuild concurrency quota.** A request for one Linux/Small build is awaiting AWS review. See [validation evidence](docs/validation.md); a successful end-to-end CodePipeline run has not yet been demonstrated.
+**Active deployment:** GitHub Actions runs scans, builds, digest signing and signature-verified ECS deployment. AWS hosts ECR, ECS, Falco, signing parameters and CloudWatch. GitHub uses short-lived OIDC credentials with separate bounded build/deploy roles. The legacy CodeBuild pipeline is disabled because its account quota is zero. See [validation evidence](docs/validation.md) for actual run results and [PowerShell commands](docs/LOCAL-RUN-POWERSHELL.md) for the independent local app.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-  GitHub[GitHub main branch] --> Pipeline[CodePipeline V2]
-  Pipeline --> Build[CodeBuild: tests / Checkov / cfn-lint / Guard / Semgrep / Trivy]
+  GitHub[GitHub main branch] --> Pipeline[GitHub Actions / main-only environments / AWS OIDC]
+  Pipeline --> Build[Build job: tests / Checkov / cfn-lint / Guard / Semgrep / Trivy]
   Build --> Image[Build container / Trivy HIGH + CRITICAL gate / SBOM]
   Image --> ECR[ECR: immutable tags / BASIC scan-on-push]
   ECR --> Sign[Cosign: sign exact digest]
   Sign --> Release[release.json: digest + source commit]
-  Release --> Verify[Separate CodeBuild role: IAM validation / trusted-key signature verification]
+  Release --> Verify[Separate deployment job and role: IAM validation / trusted-key signature verification]
   Verify --> ECS[ECS on one EC2 instance]
   ECS --> App[Non-root / read-only / no capabilities / no AWS permissions]
   ECS --> Falco[Falco modern eBPF on Linux host]
   Falco --> Logs[CloudWatch JSON logs / metric / alarm]
-  Pipeline --> Events[Native pipeline events to EventBridge to CloudWatch Logs]
+  Pipeline --> Evidence[GitHub logs and scan / SBOM / deployment artifacts]
+  Local[Local Docker app on localhost:8080]
   Audit[CloudTrail Event History: independent 90-day API audit]
 ```
 
@@ -32,11 +33,15 @@ AWS resources can incur charges. Open-source security tools remove product subsc
 | `app/`, `Dockerfile` | Dependency-free HTTP demo, `/health`, non-root container, digest-pinned base |
 | `infra/platform.json` | ECR, artifact bucket, logs, IAM boundary and runtime roles, alerting |
 | `infra/runtime.json` | Existing VPC/subnet, one encrypted EC2 ECS host, Falco, zero-count bootstrap service |
-| `infra/pipeline.json` | GitHub CodeConnection input, V2 pipeline, separate CodeBuild roles |
-| `infra/generate.py` | Editable source for the three templates; regenerate after changing it |
+| `.github/workflows/deploy.yml` | Active GitHub Actions scan/build/sign and separate verify/deploy jobs |
+| `infra/github.json` | AWS OIDC provider and separate bounded GitHub roles |
+| `infra/pipeline.json` | Retained legacy CodePipeline/CodeBuild infrastructure; push detection disabled |
+| `infra/generate.py` | Editable source for all four templates; regenerate after changing it |
 | `security/` | Guard rules and rejection fixtures, Semgrep rules, Checkov scope, version/checksum locks |
 | `scripts/` | Scan, build, sign, verify/deploy, provisioning, drift and stop/resume commands |
-| `docs/deployment.md` | Step-by-step console and terminal setup |
+| `docs/github-actions.md` | Active CI setup, trust, running and troubleshooting |
+| `docs/deployment.md` | AWS stack setup and legacy pipeline reference |
+| `docs/LOCAL-RUN-POWERSHELL.md` | Copyable local Python/Docker/scan commands |
 | `docs/trust-and-costs.md` | Trust boundary, substitutions, limits and billing considerations |
 
 ## Run locally (PowerShell)
@@ -67,9 +72,9 @@ Never add `--ignore-unfixed`, `|| true`, or `--exit-code 0` to get a passing dem
 
 ## Deploy
 
-Follow [deployment instructions](docs/deployment.md). The project uses an existing GitHub repository and an authorized GitHub CodeConnection. The source branch is `main`. Confirm that CodeBuild's applied Linux/Small concurrency quota is at least one before starting the managed pipeline.
+Follow [GitHub Actions instructions](docs/github-actions.md). Push application, infrastructure or pipeline changes to `main`, or select **Run workflow** in GitHub Actions. Documentation-only pushes do not deploy. CodeBuild capacity is not required. Production runs are serialized and use GitHub environments restricted to `main`.
 
-The managed deployment stage validates IAM policies, verifies the trusted-key signature for the exact repository digest, and checks task hardening before starting the container. The initial release used the same verifier from the administrator's local setup session while CodeBuild capacity was unavailable. The build role cannot deploy; the deploy role cannot sign or push images. Local tests explicitly check rejection and rollback behavior.
+The deployment job validates IAM policies, verifies the trusted-key signature for the exact repository digest, and checks task hardening before changing ECS. It downloads only its own run's release artifact and checks the exact source commit. The build role cannot deploy; the deploy role cannot sign or push images. Local tests check rejection and rollback behavior. The initial bootstrap release used the same verifier from the administrator's local setup session.
 
 ## Assignment substitutions
 

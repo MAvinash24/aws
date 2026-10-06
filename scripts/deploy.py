@@ -56,10 +56,11 @@ def verify_and_update(ecs, cluster, service, task, image, verify):
 def main():
     import boto3
     project = os.environ["PROJECT_NAME"]
-    release_path = Path(os.environ["CODEBUILD_SRC_DIR_Release"]) / "release.json"
+    release_path = Path(os.environ.get("RELEASE_DIR") or os.environ["CODEBUILD_SRC_DIR_Release"]) / "release.json"
     release = json.loads(release_path.read_text(encoding="utf-8"))
     image = validate_release(release, os.environ["ECR_URI"])
-    if release["source"] != os.environ["CODEBUILD_RESOLVED_SOURCE_VERSION"]:
+    source = os.environ.get("RELEASE_SOURCE") or os.environ["CODEBUILD_RESOLVED_SOURCE_VERSION"]
+    if release["source"] != source:
         raise ValueError("Build artifact and deploy source commit do not match")
     ssm, ecs = boto3.client("ssm"), boto3.client("ecs")
     key = ssm.get_parameter(Name=f"/{project}/signing/public-key")["Parameter"]["Value"]

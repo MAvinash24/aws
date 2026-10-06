@@ -676,7 +676,7 @@
                   "BranchName": {
                     "Ref": "BranchName"
                   },
-                  "DetectChanges": "true",
+                  "DetectChanges": "false",
                   "OutputArtifactFormat": "CODE_ZIP"
                 },
                 "RunOrder": 1,

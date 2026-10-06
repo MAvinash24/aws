@@ -9,7 +9,8 @@ def main():
     iam, analyzer = boto3.client("iam"), boto3.client("accessanalyzer")
     project = os.environ["PROJECT_NAME"]
     policies = []
-    for suffix in ("host", "task", "execution", "build", "deploy", "pipeline"):
+    suffixes = os.environ.get("IAM_ROLE_SUFFIXES", "host,task,execution,build,deploy,pipeline").split(",")
+    for suffix in suffixes:
         name = project + "-" + suffix
         pages = iam.get_paginator("list_role_policies").paginate(RoleName=name)
         for page in pages:

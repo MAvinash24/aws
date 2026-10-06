@@ -1,4 +1,6 @@
-# Deployment guide: Mumbai, single-account demo
+# AWS infrastructure guide: Mumbai, single-account demo
+
+**Active CI/CD uses GitHub Actions.** Follow [github-actions.md](github-actions.md). The CodePipeline/CodeBuild instructions below are retained legacy reference; its automatic source trigger and inbound build transition are disabled. CodeBuild quota approval is unnecessary for the active workflow.
 
 ## 1. Authenticate and prepare the repository
 
@@ -6,7 +8,7 @@ Use configured AWS CLI/SDK credentials or CloudShell. Local credentials were ver
 
 Upload this source to `https://github.com/MAvinash24/aws` on `main`. Exclude `.venv`, `.tools`, `.secrets`, `reports`, `dist`, signing keys and local account configuration. The original assignment screenshots are reference material; they are not needed in the source repository. A private repository limits unnecessary exposure of project material.
 
-Protect the release branch against unauthorized changes to buildspecs, signing code, IAM and deployment verification. GitHub Free private repositories may limit branch-protection features; where unavailable, restrict collaborators and manually review all changes before pushing. Local pre-commit hooks are convenience checks and can be bypassed. The AWS pipeline is the actual gate.
+Protect the release branch against unauthorized changes to buildspecs, signing code, IAM and deployment verification. GitHub Free private repositories may limit branch-protection features; where unavailable, restrict collaborators and manually review all changes before pushing. Local pre-commit hooks are convenience checks and can be bypassed. The GitHub Actions workflow is the active gate.
 
 ## 2. Console checks (no resource creation)
 
@@ -92,14 +94,14 @@ Falco is a host sensor: it needs powerful Linux capabilities and the Docker sock
 
 The bootstrap installs a systemd rule blocking bridge containers from host metadata. Check the rule again after host replacement/reboot. ECS app task credentials remain separate and grant no AWS permissions.
 
-## 7. Pipeline stack
+## 7. Legacy pipeline stack (inactive)
 
 ```bash
 python scripts/provision.py pipeline
 python scripts/provision.py pipeline --execute
 ```
 
-The new V2 pipeline uses queued executions. GitHub source changes trigger:
+This retained V2 pipeline uses queued executions but source-change detection is now disabled. It does not run automatically. Its legacy stages are:
 
 1. Unit tests, template checks, selected Checkov controls, Guard, Semgrep and filesystem Trivy scan.
 2. IAM Access Analyzer validation of actual role policies and the boundary. ERROR/SECURITY_WARNING blocks progress; other suggestions are saved.
@@ -115,10 +117,10 @@ Inspect CloudWatch `/devsecops/devsecops-demo/build` and `/deploy` and the CodeP
 Use an AWS CLI session on your Windows machine with the Session Manager plugin installed, or the Systems Manager Console for host commands. Find the instance ID in EC2 by the `devsecops-demo` name tag. No inbound SG changes are required.
 
 ```powershell
-aws ssm start-session --region ap-south-1 --target i-REPLACE --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["8080"],"localPortNumber":["8080"]}'
+aws ssm start-session --region ap-south-1 --target i-REPLACE --document-name AWS-StartPortForwardingSession --parameters '{"portNumber":["8080"],"localPortNumber":["18080"]}'
 ```
 
-Open `http://127.0.0.1:8080/health` on the client running the forwarding session. Do not expose port 8080 publicly to make the demo easier.
+Open `http://127.0.0.1:18080/health` on the client running the forwarding session. Port 18080 avoids conflicting with the independent local app on port 8080. Do not expose port 8080 publicly to make the demo easier.
 
 Inside the host's SSM shell, inspect the sensor and generate one harmless shell event in the demo app container:
 
@@ -144,6 +146,6 @@ python scripts/stop-demo.py
 
 Drift results are saved with all returned resources. CloudFormation detects only supported explicitly configured properties. Pipeline updates to the ECS service's task revision/DesiredCount intentionally differ from its zero-count bootstrap template; review these changes against `reports/deployment.json`, rather than claiming every runtime drift is malicious. Do not update the bootstrap runtime stack unchanged after deployment: it could reset the service to zero/old task. The provisioning helper deliberately refuses that update.
 
-Shutdown first pauses the pipeline build transition, scales the app to zero, and scales the Auto Scaling group to zero. This avoids replacement EC2 instances. ECR, S3 and logs remain and can still incur storage costs. Resume with `python scripts/resume-demo.py`; it starts a fresh pipeline verification before restoring the application.
+With `ci_provider: github`, shutdown disables the GitHub workflow, cancels/waits for active jobs, pauses the legacy pipeline, scales the app to zero, and scales the Auto Scaling group to zero. Git Credential Manager access is required for GitHub control. This avoids replacement EC2 instances. ECR, S3 and logs remain and can still incur storage costs. Resume with `python scripts/resume-demo.py`; it restores the host and requests a fresh GitHub Actions verification/deployment.
 
-For full removal, export evidence, delete the pipeline stack then runtime stack then platform stack through CloudFormation. ECR and the artifact bucket are deliberately **retained**. Empty their objects/versions and remove them separately only after confirming that evidence can be destroyed. Remove the three signing parameters and the GitHub connection if no longer needed. Check Billing afterward. No destructive cleanup runs automatically.
+For full removal, export evidence, disable the GitHub workflow and delete the GitHub-role stack, then pipeline stack, runtime stack and platform stack through CloudFormation. ECR and the artifact bucket are deliberately **retained**. Empty their objects/versions and remove them separately only after confirming that evidence can be destroyed. Remove the three signing parameters and the GitHub connection if no longer needed. Check Billing afterward. No destructive cleanup runs automatically.

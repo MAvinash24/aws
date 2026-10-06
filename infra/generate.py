@@ -1,5 +1,6 @@
 """Generate editable CloudFormation JSON; no AWS calls or resource creation."""
 import json
+import copy
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -283,15 +284,46 @@ def generate_pipeline():
         return a
     r["Pipeline"] = resource("CodePipeline::Pipeline", Name=ref("ProjectName"), PipelineType="V2", ExecutionMode="QUEUED", RoleArn=att("PipelineRole"),
                              ArtifactStore={"Type": "S3", "Location": ref("ArtifactBucket")},
-                             Stages=[{"Name": "Source", "Actions": [action("GitHub", "CodeStarSourceConnection", "Source", {"ConnectionArn": ref("ConnectionArn"), "FullRepositoryId": ref("FullRepositoryId"), "BranchName": ref("BranchName"), "DetectChanges": "true", "OutputArtifactFormat": "CODE_ZIP"}, outputs=["Source"])]},
+                             Stages=[{"Name": "Source", "Actions": [action("GitHub", "CodeStarSourceConnection", "Source", {"ConnectionArn": ref("ConnectionArn"), "FullRepositoryId": ref("FullRepositoryId"), "BranchName": ref("BranchName"), "DetectChanges": "false", "OutputArtifactFormat": "CODE_ZIP"}, outputs=["Source"])]},
                                      {"Name": "BuildScanSign", "Actions": [action("Build", "CodeBuild", "Build", {"ProjectName": ref("Build")}, inputs=["Source"], outputs=["Release"])]},
                                      {"Name": "VerifyDeploy", "Actions": [action("VerifyDeploy", "CodeBuild", "Build", {"ProjectName": ref("Deploy"), "PrimarySource": "Source"}, inputs=["Source", "Release"], outputs=["Deployment"])]}])
     output(t, "PipelineName", ref("Pipeline"))
     return t
 
 
+def generate_github():
+    t = base("GitHub Actions OIDC: separate bounded build and deploy roles; repository IDs and main-only environments control trust.")
+    t["Parameters"].update({
+        "OidcSubjectPrefix": {"Type": "String", "AllowedPattern": "repo:[^:*?]+", "Description": "Exact subject prefix returned by GitHub OIDC customization API, including immutable IDs when enabled."},
+        "ExistingOidcProviderArn": {"Type": "String", "Default": "", "Description": "Reuse an existing GitHub OIDC provider, or leave empty to create one."},
+        "RepositoryArn": {"Type": "String"}, "BoundaryArn": {"Type": "String"},
+        "ExecutionRoleArn": {"Type": "String"}, "TaskRoleArn": {"Type": "String"},
+    })
+    t["Conditions"] = {"CreateProvider": {"Fn::Equals": [ref("ExistingOidcProviderArn"), ""]}}
+    r = t["Resources"]
+    r["Provider"] = resource("IAM::OIDCProvider", Url="https://token.actions.githubusercontent.com", ClientIdList=["sts.amazonaws.com"])
+    r["Provider"]["Condition"] = "CreateProvider"
+    provider = {"Fn::If": ["CreateProvider", ref("Provider"), ref("ExistingOidcProviderArn")]}
+    legacy = generate_pipeline()["Resources"]
+    for logical, original, suffix, environment in [("GithubBuildRole", "BuildRole", "github-build", "build"), ("GithubDeployRole", "DeployRole", "github-deploy", "production")]:
+        item = copy.deepcopy(legacy[original])
+        props = item["Properties"]
+        props["RoleName"] = sub("${ProjectName}-" + suffix)
+        props["AssumeRolePolicyDocument"] = document([{
+            "Effect": "Allow", "Action": ["sts:AssumeRoleWithWebIdentity"], "Principal": {"Federated": provider},
+            "Condition": {"StringEquals": {"token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                                           "token.actions.githubusercontent.com:sub": sub("${OidcSubjectPrefix}:environment:" + environment)}}}])
+        # GitHub stores its own job logs/artifacts; these roles need no S3/log writes.
+        statements = props["Policies"][0]["PolicyDocument"]["Statement"]
+        props["Policies"][0]["PolicyDocument"]["Statement"] = [x for x in statements if not any(a.startswith(("s3:", "logs:")) for a in x["Action"])]
+        r[logical] = item
+        output(t, logical + "Arn", att(logical))
+    output(t, "OidcProviderArn", provider)
+    return t
+
+
 def main():
-    for name, template in [("platform", generate_platform()), ("runtime", generate_runtime()), ("pipeline", generate_pipeline())]:
+    for name, template in [("platform", generate_platform()), ("runtime", generate_runtime()), ("pipeline", generate_pipeline()), ("github", generate_github())]:
         (HERE / (name + ".json")).write_text(json.dumps(template, indent=2) + "\n", encoding="utf-8")
 
 

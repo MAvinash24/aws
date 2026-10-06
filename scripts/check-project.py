@@ -10,7 +10,7 @@ def main():
     spec = importlib.util.spec_from_file_location("generate", ROOT / "infra/generate.py")
     generator = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(generator)
-    for name in ("platform", "runtime", "pipeline"):
+    for name in ("platform", "runtime", "pipeline", "github"):
         actual = json.loads((ROOT / f"infra/{name}.json").read_text())
         if actual != getattr(generator, "generate_" + name)():
             raise SystemExit("Generated infrastructure is stale: run python infra/generate.py")
@@ -30,6 +30,13 @@ def main():
         raise SystemExit("Build role has deployment permissions")
     if "private-key" in deploy or "signing/password" in deploy or "ecr:PutImage" in deploy:
         raise SystemExit("Deploy role has signing or push permissions")
+    github = generator.generate_github()["Resources"]
+    build = json.dumps(github["GithubBuildRole"])
+    deploy = json.dumps(github["GithubDeployRole"])
+    if any(action in build for action in ("ecs:UpdateService", "ecs:RegisterTaskDefinition", "iam:PassRole")):
+        raise SystemExit("GitHub build role can deploy")
+    if any(value in deploy for value in ("private-key", "signing/password", "ecr:PutImage")):
+        raise SystemExit("GitHub deploy role can sign or push")
     print("Project consistency and permission separation: PASS")
 
 

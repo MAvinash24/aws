@@ -1,0 +1,385 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "GitHub Actions OIDC: separate bounded build and deploy roles; repository IDs and main-only environments control trust.",
+  "Metadata": {
+    "AWSToolsMetrics": {
+      "AWSAgentToolkit": "aws-cloudformation@3"
+    },
+    "com.aws.cloudformation.Context": {
+      "ref": [
+        "docs/trust-and-costs.md",
+        "docs/deployment.md"
+      ]
+    }
+  },
+  "Parameters": {
+    "ProjectName": {
+      "Type": "String",
+      "Default": "devsecops-demo",
+      "AllowedPattern": "[a-z][a-z0-9-]{2,23}"
+    },
+    "OidcSubjectPrefix": {
+      "Type": "String",
+      "AllowedPattern": "repo:[^:*?]+",
+      "Description": "Exact subject prefix returned by GitHub OIDC customization API, including immutable IDs when enabled."
+    },
+    "ExistingOidcProviderArn": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Reuse an existing GitHub OIDC provider, or leave empty to create one."
+    },
+    "RepositoryArn": {
+      "Type": "String"
+    },
+    "BoundaryArn": {
+      "Type": "String"
+    },
+    "ExecutionRoleArn": {
+      "Type": "String"
+    },
+    "TaskRoleArn": {
+      "Type": "String"
+    }
+  },
+  "Resources": {
+    "Provider": {
+      "Type": "AWS::IAM::OIDCProvider",
+      "Properties": {
+        "Url": "https://token.actions.githubusercontent.com",
+        "ClientIdList": [
+          "sts.amazonaws.com"
+        ]
+      },
+      "Condition": "CreateProvider"
+    },
+    "GithubBuildRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "${ProjectName}-github-build"
+        },
+        "PermissionsBoundary": {
+          "Ref": "BoundaryArn"
+        },
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "sts:AssumeRoleWithWebIdentity"
+              ],
+              "Principal": {
+                "Federated": {
+                  "Fn::If": [
+                    "CreateProvider",
+                    {
+                      "Ref": "Provider"
+                    },
+                    {
+                      "Ref": "ExistingOidcProviderArn"
+                    }
+                  ]
+                }
+              },
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": {
+                    "Fn::Sub": "${OidcSubjectPrefix}:environment:build"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ProjectPermissions",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "access-analyzer:ValidatePolicy"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:ListRolePolicies",
+                    "iam:GetRolePolicy"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:GetPolicy",
+                    "iam:GetPolicyVersion"
+                  ],
+                  "Resource": {
+                    "Ref": "BoundaryArn"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:GetAuthorizationToken"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:BatchGetImage",
+                    "ecr:PutImage",
+                    "ecr:InitiateLayerUpload",
+                    "ecr:UploadLayerPart",
+                    "ecr:CompleteLayerUpload",
+                    "ecr:DescribeImages"
+                  ],
+                  "Resource": {
+                    "Ref": "RepositoryArn"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ssm:GetParameter"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectName}/signing/private-key"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectName}/signing/password"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kms:Decrypt"
+                  ],
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "kms:ViaService": {
+                        "Fn::Sub": "ssm.${AWS::Region}.amazonaws.com"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "GithubDeployRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "${ProjectName}-github-deploy"
+        },
+        "PermissionsBoundary": {
+          "Ref": "BoundaryArn"
+        },
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "sts:AssumeRoleWithWebIdentity"
+              ],
+              "Principal": {
+                "Federated": {
+                  "Fn::If": [
+                    "CreateProvider",
+                    {
+                      "Ref": "Provider"
+                    },
+                    {
+                      "Ref": "ExistingOidcProviderArn"
+                    }
+                  ]
+                }
+              },
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": {
+                    "Fn::Sub": "${OidcSubjectPrefix}:environment:production"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ProjectPermissions",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "access-analyzer:ValidatePolicy"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:ListRolePolicies",
+                    "iam:GetRolePolicy"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:GetPolicy",
+                    "iam:GetPolicyVersion"
+                  ],
+                  "Resource": {
+                    "Ref": "BoundaryArn"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:GetAuthorizationToken"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:BatchGetImage",
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:BatchCheckLayerAvailability"
+                  ],
+                  "Resource": {
+                    "Ref": "RepositoryArn"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ssm:GetParameter"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectName}/signing/public-key"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecs:RegisterTaskDefinition"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/${ProjectName}:*"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "ecs:privileged": "false"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecs:DescribeTaskDefinition"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecs:DescribeServices",
+                    "ecs:UpdateService"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/${ProjectName}/${ProjectName}"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:PassRole"
+                  ],
+                  "Resource": [
+                    {
+                      "Ref": "ExecutionRoleArn"
+                    },
+                    {
+                      "Ref": "TaskRoleArn"
+                    }
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": "ecs-tasks.amazonaws.com"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "GithubBuildRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "GithubBuildRole",
+          "Arn"
+        ]
+      }
+    },
+    "GithubDeployRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "GithubDeployRole",
+          "Arn"
+        ]
+      }
+    },
+    "OidcProviderArn": {
+      "Value": {
+        "Fn::If": [
+          "CreateProvider",
+          {
+            "Ref": "Provider"
+          },
+          {
+            "Ref": "ExistingOidcProviderArn"
+          }
+        ]
+      }
+    }
+  },
+  "Conditions": {
+    "CreateProvider": {
+      "Fn::Equals": [
+        {
+          "Ref": "ExistingOidcProviderArn"
+        },
+        ""
+      ]
+    }
+  }
+}

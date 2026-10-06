@@ -6,7 +6,7 @@ The trusted public key lives in SSM under a separately authorized administrator.
 
 Cosign stores OCI 1.1 reference artifacts in ECR. Each build has a unique image tag. The checked-in `cosign-signing.json` selects private keyed signing with no Rekor or timestamping services. Verification uses `--insecure-ignore-tlog=true` to disable the transparency-log requirement while retaining cryptographic signature and digest verification. This does not disable TLS or signature checking. The pinned Cosign version requires `COSIGN_EXPERIMENTAL=1` for OCI 1.1 registry referrers; both stages set it explicitly. This demonstration proves artifact integrity relative to the trusted key, not public transparency or independent build provenance.
 
-Signing and deployment roles are separate. A compromised build identity can sign an image using the build key; the signature alone does not establish that its source is safe. The release branch, buildspecs, scanner rules, role policies and SSM key writes must be trusted and reviewed. ECS has no built-in Cosign admission policy here. An administrator or another principal with direct ECS deployment permissions can bypass the normal pipeline. The IAM boundary applies to project roles, not to root/admin or the entire account.
+GitHub build and deployment roles use short-lived OIDC credentials, require the exact immutable repository/environment subject and audience, and retain the AWS permissions boundary. GitHub environment branch rules restrict both roles to `main`. Repository/environment administrators can change those controls, so they remain trusted. Signing and deployment roles are separate. A compromised build identity can sign an image using the build key; the signature alone does not establish that its source is safe. The release branch, GitHub workflow/buildspecs, scanner rules, role policies and SSM key writes must be trusted and reviewed. ECS has no built-in Cosign admission policy here. An administrator or another principal with direct ECS deployment permissions can bypass the normal pipeline. The IAM boundary applies to project roles, not to root/admin or the entire account.
 
 The application grants no AWS API permissions, runs as UID 10001, has a read-only filesystem, and drops all Linux capabilities. Falco uses host-level capabilities and Docker-socket access as required by its sensor. Host compromise can affect the application and monitoring; Falco is detection, not sandbox enforcement or automatic remediation.
 
@@ -21,7 +21,8 @@ Python scanner packages have pinned direct versions; their transitive resolution
 ## Correct monitoring flows
 
 * Falco JSON → CloudWatch Logs → metric filter → CloudWatch alarm.
-* Native CodePipeline events → EventBridge → CloudWatch Logs.
+* Active GitHub Actions → GitHub job logs and downloadable evidence artifacts.
+* Retained legacy CodePipeline events → EventBridge → CloudWatch Logs (legacy CI disabled).
 * CloudTrail Event History → console/API audit lookup.
 * CloudFormation → explicitly requested drift detection → evidence JSON.
 

@@ -17,8 +17,17 @@ def main():
     if session.client("sts").get_caller_identity()["Account"] != config["expected_account"]:
         raise SystemExit("Wrong AWS account")
     project = config["project"]
+    if config.get("ci_provider") == "github":
+        from github_api import request
+        # Verify GitHub access before changing AWS compute.
+        request(config["github_repository"], "workflows/deploy.yml")
     outputs = provision.stack_outputs(session.client("cloudformation"), project + "-runtime")
     session.client("autoscaling").update_auto_scaling_group(AutoScalingGroupName=outputs["AutoScalingGroup"], MinSize=1, MaxSize=1, DesiredCapacity=1)
+    if config.get("ci_provider") == "github":
+        request(config["github_repository"], "workflows/deploy.yml/enable", "PUT")
+        request(config["github_repository"], "workflows/deploy.yml/dispatches", "POST", {"ref": config["github_branch"]})
+        print("Host resumed; GitHub Actions verification and deployment requested")
+        return
     pipeline = session.client("codepipeline")
     pipeline.enable_stage_transition(pipelineName=project, stageName="BuildScanSign", transitionType="Inbound")
     execution = pipeline.start_pipeline_execution(name=project)
