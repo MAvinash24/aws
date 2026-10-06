@@ -1,0 +1,2071 @@
+[
+  {
+    "title": "1 Introduction",
+    "summary": "This capstone implements secure container delivery from GitHub to AWS and keeps an independent local Docker demonstration available. The completed release passes preventive security gates, cryptographic verification and ECS health checks. Evidence is recorded against a specific source commit and image digest, rather than inferred from the presence of cloud resources.",
+    "sections": [
+      {
+        "title": "1.1 Background and Motivation",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": "A container can be deployable while its source, dependencies or delivery credentials remain unsafe. A reproducible security engineering workflow must examine the source, infrastructure, image and deployment decision together. This project demonstrates those checks with a deliberately small application so the delivery controls can be reviewed clearly."
+          },
+          {
+            "type": "paragraph",
+            "text": "The original AWS CodePipeline design reached its source stage, but CodeBuild could not start because applied account and regional concurrency was zero. AdministratorAccess did not override the service quota. The final architecture moves CI computation to GitHub Actions while ECR, ECS, Falco and AWS monitoring remain on AWS. The exact account restriction was observed; its underlying account-policy reason was not established."
+          }
+        ]
+      },
+      {
+        "title": "1.2 Purpose and Scope",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": "The report covers requirements, use cases, artifact modeling, data flows, threats, attack paths, operational interfaces, implementation changes, tests and verified deployment. It documents a single-account educational deployment in Mumbai and a localhost-only Docker app in D:\\aws."
+          },
+          {
+            "type": "paragraph",
+            "text": "The application exposes JSON at / and /health. It has no authentication system, database, user-upload feature or interactive command execution. The engineering scope is the secure delivery and runtime observation of this service. Production availability, multi-account governance and a full enterprise security audit are outside this baseline."
+          }
+        ]
+      },
+      {
+        "title": "1.3 Executive Summary",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Verified project baseline",
+            "headers": [
+              "Area",
+              "Final implementation",
+              "Evidence"
+            ],
+            "rows": [
+              [
+                "CI/CD",
+                "Two GitHub Actions jobs with separate AWS OIDC roles",
+                "Successful run {{RUN_ID}}"
+              ],
+              [
+                "Preventive controls",
+                "11 tests, IaC lint, selected Checkov, Guard, Semgrep and Trivy",
+                "Downloaded run evidence"
+              ],
+              [
+                "Artifact integrity",
+                "Cosign keyed signature on the exact ECR digest",
+                "Verified deployment manifest"
+              ],
+              [
+                "AWS runtime",
+                "One healthy ECS task on one t3.micro EC2 host",
+                "Current CLI/SDK snapshot"
+              ],
+              [
+                "Runtime detection",
+                "Falco modern eBPF with CloudWatch delivery",
+                "Actual Warning events"
+              ],
+              [
+                "Local demonstration",
+                "Docker app on 127.0.0.1:8080",
+                "Healthy local response"
+              ]
+            ],
+            "widths": [
+              1.15,
+              3.4,
+              2.5
+            ]
+          }
+        ]
+      },
+      {
+        "title": "1.4 Engineering Lifecycle",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": "The lifecycle proceeds from requirements to architecture and threat analysis, then infrastructure validation, implementation, negative testing and deployment evidence. Security is checked before publishing and again before deployment. Runtime monitoring observes behavior after release; it does not replace preventive controls."
+          },
+          {
+            "type": "figure",
+            "file": "architecture.png",
+            "caption": "Implemented architecture with independent local Docker runtime and separate build and deployment authority"
+          }
+        ]
+      },
+      {
+        "title": "1.5 Technology and Toolchain",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Tools and their actual roles",
+            "headers": [
+              "Tool",
+              "Purpose",
+              "Scope or limitation"
+            ],
+            "rows": [
+              [
+                "Python 3.12 container",
+                "Dependency-free JSON HTTP application",
+                "Standard library service"
+              ],
+              [
+                "Docker",
+                "Local and CI image build; hardened execution",
+                "Local app stays separate from ECS"
+              ],
+              [
+                "GitHub Actions",
+                "Tests, scans, build, signing and deployment",
+                "Standard hosted Ubuntu runners"
+              ],
+              [
+                "CloudFormation and cfn-lint",
+                "Four generated infrastructure templates",
+                "Schema checks and reviewed changes"
+              ],
+              [
+                "Checkov and Guard",
+                "Selected IaC controls and explicit invariants",
+                "Not every AWS benchmark"
+              ],
+              [
+                "Semgrep CE",
+                "Checked-in rules and unsafe-pattern fixtures",
+                "Small rule set, not exhaustive SAST"
+              ],
+              [
+                "Trivy",
+                "Filesystem/image CVE and secret gates; SBOM",
+                "Database-dependent findings"
+              ],
+              [
+                "Cosign",
+                "Keyed ECR digest signing and verification",
+                "No public Rekor transparency requirement"
+              ],
+              [
+                "AWS IAM and SSM",
+                "Scoped roles, boundary and signing trust",
+                "Administrator remains trusted"
+              ],
+              [
+                "Falco and CloudWatch",
+                "Host/container behavior detection and alerting",
+                "Sensor requires host privileges"
+              ]
+            ],
+            "widths": [
+              1.35,
+              3.0,
+              2.7
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "2 Requirement Engineering",
+    "summary": "Requirements separate what the service does from the safeguards required to release it. Each identifier is used again in the traceability matrix. Status is based on observed configuration or tests, with future work kept separate.",
+    "sections": [
+      {
+        "title": "2.1 Problem Statement",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": "Build an auditable DevSecOps demonstration that rejects unsafe source, infrastructure and images; authenticates CI without stored AWS access keys; signs immutable artifacts; verifies trust before modifying ECS; and observes suspicious container behavior. The local service must remain usable while the cloud pipeline executes."
+          }
+        ]
+      },
+      {
+        "title": "2.2 Stakeholders",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Stakeholders and responsibilities",
+            "headers": [
+              "Stakeholder",
+              "Responsibility",
+              "Security consideration"
+            ],
+            "rows": [
+              [
+                "Developer",
+                "Review and push application/security changes",
+                "Trusted main-branch code can alter the delivery process"
+              ],
+              [
+                "AWS administrator",
+                "Provision account-scoped resources and signing trust",
+                "Can bypass pipeline controls if directly authorized"
+              ],
+              [
+                "CI build job",
+                "Scan, build, publish and sign",
+                "Cannot register tasks, update ECS or pass roles"
+              ],
+              [
+                "CI deployment job",
+                "Validate trust and deploy exact digest",
+                "Cannot push images or read private signing material"
+              ],
+              [
+                "Evaluator or operator",
+                "Inspect report, workflow and runtime evidence",
+                "Must distinguish test doubles from live observations"
+              ]
+            ],
+            "widths": [
+              1.45,
+              2.8,
+              2.8
+            ]
+          }
+        ]
+      },
+      {
+        "title": "2.3 Functional Requirements",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Functional requirements",
+            "headers": [
+              "ID",
+              "Requirement",
+              "Acceptance evidence"
+            ],
+            "rows": [
+              [
+                "FR01",
+                "Serve project metadata and HTTP health JSON",
+                "200 for / and /health"
+              ],
+              [
+                "FR02",
+                "Reject unknown and traversal-shaped paths",
+                "404 results in test_app"
+              ],
+              [
+                "FR03",
+                "Run source and infrastructure gates before AWS build access",
+                "Workflow step ordering and successful jobs"
+              ],
+              [
+                "FR04",
+                "Build, scan and publish a uniquely tagged immutable image",
+                "ECR digest and Trivy report"
+              ],
+              [
+                "FR05",
+                "Sign the exact digest using protected SSM trust",
+                "Cosign signature accepted by verifier"
+              ],
+              [
+                "FR06",
+                "Transfer release identity to a separate deployment job",
+                "Same-run release artifact"
+              ],
+              [
+                "FR07",
+                "Verify source, repository, digest, key and hardening before ECS mutation",
+                "Negative tests and real verified deployment"
+              ],
+              [
+                "FR08",
+                "Reach one healthy ECS task and reject rollback as success",
+                "Current service/task evidence"
+              ],
+              [
+                "FR09",
+                "Detect a harmless unexpected container shell event",
+                "Falco Warning delivered to CloudWatch"
+              ],
+              [
+                "FR10",
+                "Keep a hardened local app running independently",
+                "Docker inspect and localhost health"
+              ]
+            ],
+            "widths": [
+              0.65,
+              3.65,
+              2.75
+            ]
+          }
+        ]
+      },
+      {
+        "title": "2.4 Non Functional Requirements",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Non functional requirements",
+            "headers": [
+              "ID",
+              "Requirement",
+              "Implemented baseline"
+            ],
+            "rows": [
+              [
+                "NF01",
+                "Reproducible inputs",
+                "Digest-pinned base and sensor; pinned action commits; checksummed native tools"
+              ],
+              [
+                "NF02",
+                "Limited attack surface",
+                "No public application ingress; localhost local port; dependency-free app"
+              ],
+              [
+                "NF03",
+                "Controlled resource use",
+                "One EC2 host, one ECS app task and bounded workflow timeouts"
+              ],
+              [
+                "NF04",
+                "Auditability",
+                "Source SHA, digest, scan evidence, task revision and dated runtime snapshot"
+              ],
+              [
+                "NF05",
+                "Safe failures",
+                "Failing gates stop deployment; ECS rollback is reported as failure"
+              ],
+              [
+                "NF06",
+                "Maintainability",
+                "Editable generator, reusable scripts and PowerShell operating guide"
+              ]
+            ],
+            "widths": [
+              0.65,
+              2.0,
+              4.4
+            ]
+          }
+        ]
+      },
+      {
+        "title": "2.5 Security Requirements",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Security requirements",
+            "headers": [
+              "ID",
+              "Control",
+              "Verification"
+            ],
+            "rows": [
+              [
+                "SR01",
+                "Exact OIDC audience and immutable repository/environment subjects",
+                "Trust policies and real role assumption"
+              ],
+              [
+                "SR02",
+                "Main-only environments and scoped separate roles",
+                "GitHub settings, IAM validation and deny simulation"
+              ],
+              [
+                "SR03",
+                "No signing private key or AWS access key in GitHub artifacts",
+                "SSM storage and workflow handling"
+              ],
+              [
+                "SR04",
+                "Block HIGH/CRITICAL CVEs and secrets without ignoring unfixed issues",
+                "Trivy strict exit gate"
+              ],
+              [
+                "SR05",
+                "Trusted-key signature verification before any ECS registration/update",
+                "Verifier tests and real deployment"
+              ],
+              [
+                "SR06",
+                "UID 10001, read-only rootfs, unprivileged app and ALL capabilities dropped",
+                "Task validation and runtime inspection"
+              ],
+              [
+                "SR07",
+                "No application IAM permissions and metadata isolation",
+                "Task role configuration and earlier live rejection probe"
+              ],
+              [
+                "SR08",
+                "Encrypted/private storage and immutable ECR tags",
+                "Guard, Checkov and AWS configuration"
+              ],
+              [
+                "SR09",
+                "Runtime sensor and verifiable alert delivery",
+                "Falco event and CloudWatch evidence"
+              ]
+            ],
+            "widths": [
+              0.65,
+              3.7,
+              2.7
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "3 Requirement Analysis",
+    "summary": "Use cases model the actors and the conditions that permit a release. Deployment success requires the correct source and signed artifact; a completed build alone is insufficient.",
+    "sections": [
+      {
+        "title": "3.1 Actors and Use Cases",
+        "blocks": [
+          {
+            "type": "figure",
+            "file": "use-cases.png",
+            "caption": "Release use cases and actor responsibilities"
+          },
+          {
+            "type": "paragraph",
+            "text": "The developer starts a release by pushing to main or manually running the workflow. GitHub environments constrain AWS identity. The administrator establishes the initial infrastructure and trusted public key. An evaluator consumes evidence without needing signing permissions."
+          }
+        ]
+      },
+      {
+        "title": "3.2 Verified Release Use Case",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "UC01 Publish a verified release",
+            "headers": [
+              "Field",
+              "Specification"
+            ],
+            "rows": [
+              [
+                "Primary actor",
+                "Developer using approved main-branch source"
+              ],
+              [
+                "Preconditions",
+                "Configured repository variables, main-only environments, AWS roles, ECR and SSM trust"
+              ],
+              [
+                "Trigger",
+                "Source push or workflow_dispatch on main"
+              ],
+              [
+                "Normal flow",
+                "Checkout exact SHA; install pinned tools; run tests/scans; assume build role; validate IAM; build and scan; push image; sign exact digest; publish release manifest"
+              ],
+              [
+                "Exception flow",
+                "Any tool/install/scan/identity/signing failure terminates the release; evidence upload still runs where available"
+              ],
+              [
+                "Postcondition",
+                "A signed digest and same-run source manifest exist; AWS runtime has not yet been changed"
+              ]
+            ],
+            "widths": [
+              1.4,
+              5.65
+            ]
+          }
+        ]
+      },
+      {
+        "title": "3.3 Trusted Deployment Use Case",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "UC02 Verify and deploy",
+            "headers": [
+              "Field",
+              "Specification"
+            ],
+            "rows": [
+              [
+                "Primary actor",
+                "Separate GitHub deployment job"
+              ],
+              [
+                "Preconditions",
+                "Build job succeeded and this run contains its release manifest"
+              ],
+              [
+                "Normal flow",
+                "Read manifest; enforce source SHA and expected ECR repository/digest; obtain trusted SSM public key; validate current task hardening; verify signature; register revision; update this service; wait for stable healthy deployment"
+              ],
+              [
+                "Exception flow",
+                "Signature or hardening rejection occurs before registration/update; stability timeout or rollback fails the job"
+              ],
+              [
+                "Postcondition",
+                "One healthy ECS task references the verified digest and the deployment report records its source and revision"
+              ],
+              [
+                "Test linkage",
+                "Invalid signature, invalid commit, wrong repository, privileged/host-mounted task and rollback tests"
+              ]
+            ],
+            "widths": [
+              1.4,
+              5.65
+            ]
+          }
+        ]
+      },
+      {
+        "title": "3.4 Local Demonstration Use Case",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": "The operator checks the existing devsecops-local container and sends requests to localhost. This path needs Docker Desktop but does not consume CodeBuild capacity or use signing parameters. Building a newer local image does not automatically replace an existing container; the container remains running until deliberately restarted."
+          },
+          {
+            "type": "table",
+            "title": "UC03 Observe runtime behavior",
+            "headers": [
+              "Step",
+              "Expected outcome"
+            ],
+            "rows": [
+              [
+                "Check local health",
+                "JSON status healthy"
+              ],
+              [
+                "Inspect Docker hardening",
+                "UID 10001, read-only root and dropped capabilities"
+              ],
+              [
+                "Inspect AWS service separately",
+                "One current healthy digest-based task"
+              ],
+              [
+                "Generate harmless shell probe on AWS app",
+                "An actual Falco event for that container is found in CloudWatch"
+              ],
+              [
+                "Save observations",
+                "Dated JSON or screenshot evidence, with environment identified"
+              ]
+            ],
+            "widths": [
+              2.0,
+              5.05
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "4 Data Modeling",
+    "summary": "This service has no business database. Its relevant data model consists of source revisions, immutable container artifacts, signing trust, ECS definitions and evidence records. The diagram is a logical artifact model rather than a relational schema.",
+    "sections": [
+      {
+        "title": "4.1 Release Artifact Model",
+        "blocks": [
+          {
+            "type": "figure",
+            "file": "artifact-model.png",
+            "caption": "Logical relationships among source commit, workflow, manifest, digest, signature, task and evidence"
+          }
+        ]
+      },
+      {
+        "title": "4.2 Entities and Integrity Rules",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Release entities",
+            "headers": [
+              "Entity",
+              "Identifier or fields",
+              "Integrity rule"
+            ],
+            "rows": [
+              [
+                "Source revision",
+                "40 lowercase hexadecimal Git SHA",
+                "Build and deployment source must match"
+              ],
+              [
+                "Workflow run",
+                "Run ID and attempt",
+                "Artifact identity is confined to the same run"
+              ],
+              [
+                "Release manifest",
+                "image and source",
+                "Untrusted input until validated"
+              ],
+              [
+                "ECR image",
+                "Repository plus sha256 digest",
+                "Expected repository and exact content address"
+              ],
+              [
+                "Signature",
+                "OCI reference artifact",
+                "Verified against SSM public key"
+              ],
+              [
+                "Signing trust",
+                "SSM private-key/password/public-key paths",
+                "Public trust comes from administrator, not artifact"
+              ],
+              [
+                "Task definition",
+                "Family, revision, image, roles and hardening",
+                "Only permitted hardened task parameters accepted"
+              ],
+              [
+                "Evidence",
+                "Tests, scanners, SBOM, deployment JSON",
+                "Dated result for the specific checked inputs"
+              ]
+            ],
+            "widths": [
+              1.2,
+              2.6,
+              3.25
+            ]
+          }
+        ]
+      },
+      {
+        "title": "4.3 Data Stores and Retention",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Project data stores",
+            "headers": [
+              "Store",
+              "Stored data",
+              "Retention or handling"
+            ],
+            "rows": [
+              [
+                "GitHub repository",
+                "Source, workflow, configuration and report",
+                "Git history; secret/local folders excluded"
+              ],
+              [
+                "GitHub Actions artifacts",
+                "Release, scan reports, SBOM and deployment proof",
+                "Seven-day configured retention; downloaded local copies"
+              ],
+              [
+                "ECR",
+                "Application images and signature reference artifacts",
+                "Immutable tags; no automatic lifecycle deletion in baseline"
+              ],
+              [
+                "SSM Parameter Store",
+                "Protected signing key/password and trusted public key",
+                "Existing trust is not overwritten automatically"
+              ],
+              [
+                "CloudWatch Logs",
+                "Runtime application/Falco and legacy event logs",
+                "Seven-day configured log retention"
+              ],
+              [
+                "Retained S3 artifact bucket",
+                "Legacy CodePipeline artifacts",
+                "Versioned, encrypted, private; expiry policy in template"
+              ],
+              [
+                "Local reports directory",
+                "Machine-specific and downloaded evidence",
+                "Ignored by Git and packaged separately"
+              ]
+            ],
+            "widths": [
+              1.65,
+              2.6,
+              2.8
+            ]
+          }
+        ]
+      },
+      {
+        "title": "4.4 Manifest Example",
+        "blocks": [
+          {
+            "type": "code",
+            "text": "{\n  \"image\": \"<expected-ECR-repository>@sha256:<64-hex-digest>\",\n  \"source\": \"<full-40-character-Git-SHA>\"\n}"
+          },
+          {
+            "type": "paragraph",
+            "text": "A manifest is not proof of trust by itself. The verifier rejects malformed identities, a different repository, a different source commit or a signature that does not match the trusted key. ECS receives the digest, avoiding tag-resolution ambiguity."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "5 Data Flow Modeling",
+    "summary": "The release flow crosses GitHub, AWS identity, protected signing storage, registry and runtime boundaries. Each crossing has an explicit authority or validation step.",
+    "sections": [
+      {
+        "title": "5.1 Context and Decomposition",
+        "blocks": [
+          {
+            "type": "figure",
+            "file": "data-flow.png",
+            "caption": "Release data flow with untrusted manifest transfer and separate AWS identity boundaries"
+          },
+          {
+            "type": "paragraph",
+            "text": "Source enters a hosted runner, where preventive checks execute before AWS build credentials are configured. After those gates, the build role publishes and signs. A second runner receives only a release identity and assumes a different role. The trusted public key is retrieved from SSM rather than supplied by the artifact."
+          }
+        ]
+      },
+      {
+        "title": "5.2 Trust Boundary Matrix",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Trust boundaries",
+            "headers": [
+              "Boundary",
+              "Data or authority",
+              "Required control"
+            ],
+            "rows": [
+              [
+                "Developer to GitHub main",
+                "Source and workflow definitions",
+                "Authorized change review and restricted collaborators"
+              ],
+              [
+                "GitHub to AWS STS",
+                "OIDC token",
+                "Exact repository/environment subject and audience"
+              ],
+              [
+                "Build to SSM",
+                "Signing secrets",
+                "Read scope limited to private-key/password for this project"
+              ],
+              [
+                "Build to ECR",
+                "Image layers, digest and signature",
+                "Strict scan gate and repository-scoped publish"
+              ],
+              [
+                "Artifact to deploy job",
+                "Manifest from current run",
+                "Validate source, repository and SHA256 identity"
+              ],
+              [
+                "Deploy to SSM",
+                "Trusted public key",
+                "Only configured public-key parameter"
+              ],
+              [
+                "Deploy to ECS",
+                "Task registration and service update",
+                "Verify first; exact roles and hardened definition"
+              ],
+              [
+                "App to host",
+                "Kernel/container interaction",
+                "Non-root/read-only/capability restrictions; metadata block"
+              ],
+              [
+                "Falco to CloudWatch",
+                "Behavior events",
+                "Actual delivery and sensor-health validation"
+              ]
+            ],
+            "widths": [
+              1.7,
+              2.5,
+              2.85
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "6 Threat Modeling",
+    "summary": "The threat model is a design analysis of this implementation. It distinguishes controls verified in tests from residual trust in administrators and reviewed main-branch code. A threat scenario is not a claim that the account was compromised.",
+    "sections": [
+      {
+        "title": "6.1 Assets and CIA Analysis",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Assets and security priorities",
+            "headers": [
+              "Asset",
+              "Confidentiality",
+              "Integrity",
+              "Availability",
+              "Reason"
+            ],
+            "rows": [
+              [
+                "Signing private key/password",
+                "High",
+                "High",
+                "Medium",
+                "Possession enables trusted signatures"
+              ],
+              [
+                "Trusted public key",
+                "Low",
+                "High",
+                "Medium",
+                "Replacement changes release trust"
+              ],
+              [
+                "Source and workflow",
+                "Low in public repo",
+                "High",
+                "Medium",
+                "Controls what code is scanned and released"
+              ],
+              [
+                "Image and manifest",
+                "Low for this demo",
+                "High",
+                "Medium",
+                "Defines executable content"
+              ],
+              [
+                "AWS deployment authority",
+                "High",
+                "High",
+                "High",
+                "Can change the running workload"
+              ],
+              [
+                "Runtime host/sensor",
+                "Medium",
+                "High",
+                "High",
+                "Host compromise affects app and observation"
+              ],
+              [
+                "Evidence and logs",
+                "Medium",
+                "High",
+                "Medium",
+                "Supports review and incident interpretation"
+              ]
+            ],
+            "widths": [
+              1.6,
+              1.05,
+              1.0,
+              1.0,
+              2.4
+            ]
+          }
+        ]
+      },
+      {
+        "title": "6.2 STRIDE Analysis",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "STRIDE scenarios",
+            "headers": [
+              "Category",
+              "Threat scenario",
+              "Implemented response",
+              "Residual risk"
+            ],
+            "rows": [
+              [
+                "Spoofing",
+                "Another repository requests AWS authority",
+                "Exact OIDC subject and audience; main-only environments",
+                "Repository administrators remain trusted"
+              ],
+              [
+                "Tampering",
+                "Manifest digest or source changed",
+                "Repository/SHA checks and trusted-key signature",
+                "Trusted workflow changes can alter checks"
+              ],
+              [
+                "Repudiation",
+                "Release cannot be tied to source",
+                "Run IDs, source SHA, digest and deployment evidence",
+                "Artifact/log retention must be managed"
+              ],
+              [
+                "Information disclosure",
+                "Signing key or credentials leak in logs",
+                "SSM SecureStrings, temporary files and no tracing",
+                "Compromised build code can access its authorized secrets"
+              ],
+              [
+                "Denial of service",
+                "Build stalls, host overload or bad release",
+                "Timeouts, one-job concurrency, health checks and rollback rejection",
+                "One small host is a single failure domain"
+              ],
+              [
+                "Elevation of privilege",
+                "App or build gains deployment/host privileges",
+                "Bounded separate roles, non-root/read-only app, no mounts",
+                "Falco necessarily has powerful host access"
+              ]
+            ],
+            "widths": [
+              1.2,
+              1.8,
+              2.2,
+              1.85
+            ]
+          }
+        ]
+      },
+      {
+        "title": "6.3 Attack Surface and Limits",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": "The app uses a whitelist of two GET paths and never maps request paths to filesystem reads or commands. JSON log encoding reduces the risk of forged plain-text log entries. Runtime application privileges are minimized independently from the Falco sensor. These controls reduce the relevant surface; they do not establish the absence of every vulnerability in Python, Docker, the kernel or CI tools."
+          },
+          {
+            "type": "paragraph",
+            "text": "The Checkov control set is selected, Semgrep uses three project rules, and scanner results depend on supported formats and database state. Tool transitive dependencies are not fully hash-locked. A future HIGH/CRITICAL finding can legitimately fail a release even when this dated run passed."
+          }
+        ]
+      },
+      {
+        "title": "6.4 Qualitative Risk Register",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Residual risk assessment",
+            "headers": [
+              "Risk",
+              "Initial exposure",
+              "Current controls",
+              "Residual judgment"
+            ],
+            "rows": [
+              [
+                "Main workflow compromise",
+                "High",
+                "Review changes, pin actions, main-only role access",
+                "High impact remains; trusted source authority"
+              ],
+              [
+                "Private signing-key misuse",
+                "High",
+                "SSM scope, isolated role, temporary handling",
+                "Medium; authorized build compromise remains relevant"
+              ],
+              [
+                "Untrusted image deployment",
+                "High",
+                "Digest signature and verification-before-mutation",
+                "Low through normal workflow; admin bypass remains"
+              ],
+              [
+                "Host failure or resource pressure",
+                "High",
+                "Health checks, bounded app/sensor, monitoring",
+                "Medium; no high availability"
+              ],
+              [
+                "Evidence expiry",
+                "Medium",
+                "Downloaded reports and report evidence archive",
+                "Medium unless retained outside short-lived stores"
+              ],
+              [
+                "Unexpected AWS cost growth",
+                "Medium",
+                "One host, no NAT/LB, explicit stop/resume",
+                "Medium; credits and storage remain finite"
+              ]
+            ],
+            "widths": [
+              1.65,
+              1.0,
+              2.75,
+              1.65
+            ]
+          }
+        ]
+      },
+      {
+        "title": "6.5 Control Verification",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Control verification and evidence strength",
+            "headers": [
+              "Control",
+              "Evidence class",
+              "Observed result"
+            ],
+            "rows": [
+              [
+                "OIDC authentication",
+                "Live GitHub/AWS integration",
+                "Both jobs successfully assumed intended roles"
+              ],
+              [
+                "Build/deploy separation",
+                "Actual IAM simulator and policy analysis",
+                "Build ECS update denied; deploy private-key read denied"
+              ],
+              [
+                "Signature-before-mutation",
+                "Negative unit tests and real positive release",
+                "Rejected signature makes no ECS mutation; signed release deploys"
+              ],
+              [
+                "Non-root/read-only app",
+                "Actual runtime inspection",
+                "UID 10001; readonly true; privileged false; drop ALL"
+              ],
+              [
+                "Falco detection",
+                "Live host probe and CloudWatch event",
+                "Warning associated with application container"
+              ],
+              [
+                "Wrong key rejection",
+                "Earlier real ECR verifier probe",
+                "Rejected before ECS mutation in bootstrap evidence"
+              ]
+            ],
+            "widths": [
+              2.0,
+              2.1,
+              2.95
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "7 Attack Tree Analysis",
+    "summary": "The attacker goal is to make AWS execute an untrusted container. Alternative paths target source authority, artifact transfer or direct administrator deployment. The model explains where the normal workflow blocks tampering and where organizational trust remains necessary.",
+    "sections": [
+      {
+        "title": "7.1 Attacker Goal and Paths",
+        "blocks": [
+          {
+            "type": "figure",
+            "file": "attack-tree.png",
+            "caption": "Design attack tree with preventive controls and the residual administrator bypass path"
+          }
+        ]
+      },
+      {
+        "title": "7.2 Path Analysis",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Attack paths and controls",
+            "headers": [
+              "Path",
+              "Required capability",
+              "Normal workflow response"
+            ],
+            "rows": [
+              [
+                "Alter manifest",
+                "Modify current-run release data",
+                "Source/repository/digest checks and signature reject tampering"
+              ],
+              [
+                "Substitute verification key",
+                "Change an artifact field",
+                "Verifier does not accept a key from the artifact"
+              ],
+              [
+                "Use another repository identity",
+                "Obtain an unrelated GitHub OIDC token",
+                "Exact immutable subject fails AWS trust"
+              ],
+              [
+                "Deploy from build job",
+                "Use build role credentials",
+                "IAM denies ECS update/register and role passing"
+              ],
+              [
+                "Sign from deployment job",
+                "Use deployment role credentials",
+                "IAM denies private-key reads and ECR image push"
+              ],
+              [
+                "Change trusted main workflow",
+                "Authorized source control or administrator compromise",
+                "Requires protected organizational change process"
+              ],
+              [
+                "Use direct AWS administrator access",
+                "Administrator credentials",
+                "Outside the project-role boundary; audit and access review required"
+              ]
+            ],
+            "widths": [
+              1.7,
+              2.15,
+              3.2
+            ]
+          }
+        ]
+      },
+      {
+        "title": "7.3 Security Interpretation",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": "An accepted Cosign signature establishes integrity relative to the trusted signing key. It does not prove independent build provenance, source safety or that every reviewer approved the change. Keyed private signing deliberately omits public transparency-log verification. Future hardening should strengthen reviewer controls and provenance without weakening the current digest verifier."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "8 Interfaces and Operations",
+    "summary": "The implemented interface is a small JSON API, GitHub workflow status, AWS Console/CLI observations and PowerShell operating commands. The screenshots below are actual supplied evidence. They do not imply a graphical business dashboard or a public AWS application endpoint.",
+    "sections": [
+      {
+        "title": "8.1 Local Application Interface",
+        "blocks": [
+          {
+            "type": "figure",
+            "file": "local-root.png",
+            "caption": "Supplied local root endpoint showing AWS DevSecOps project metadata"
+          },
+          {
+            "type": "figure",
+            "file": "local-health.png",
+            "caption": "Supplied local health endpoint returning healthy"
+          },
+          {
+            "type": "paragraph",
+            "text": "These browser addresses are localhost. They show the local service, not a public URL for the EC2 host. The same response contract is tested and used for container health. The local Docker publish address binds to 127.0.0.1 only."
+          }
+        ]
+      },
+      {
+        "title": "8.2 AWS Runtime Interface",
+        "blocks": [
+          {
+            "type": "figure",
+            "file": "aws-ec2.png",
+            "caption": "Supplied AWS Console evidence of the devsecops-demo t3.micro host in Mumbai"
+          },
+          {
+            "type": "paragraph",
+            "text": "The screenshot shows the observed EC2 host. Current SDK/CLI evidence separately verifies ECS task health and the deployed image. The host has no public application ingress rule; use Systems Manager for controlled inspection or forwarding. The displayed public IPv4 address is not a promise that port 8080 is reachable from the internet."
+          }
+        ]
+      },
+      {
+        "title": "8.3 Operating Commands",
+        "blocks": [
+          {
+            "type": "code",
+            "text": "Set-Location D:\\aws\nInvoke-RestMethod http://127.0.0.1:8080/health\n.\\.venv\\Scripts\\python.exe -m unittest discover -s tests -v\n.\\.venv\\Scripts\\python.exe scripts/check-project.py"
+          },
+          {
+            "type": "paragraph",
+            "text": "The complete Python, Docker, scan, signing-test and stop/resume sequences are in docs/LOCAL-RUN-POWERSHELL.md. A later intentional AWS shutdown disables/cancels the GitHub workflow before scaling compute down; the current implementation is left running."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "9 Product Backlog",
+    "summary": "The backlog maps requirements to completed capabilities and clearly identified future work. It is an engineering record derived from this repository and its evidence; it does not claim an external Jira board or measured sprint velocity.",
+    "sections": [
+      {
+        "title": "9.1 Completed Backlog",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Implemented work items",
+            "headers": [
+              "Item",
+              "Requirement",
+              "Outcome",
+              "Status"
+            ],
+            "rows": [
+              [
+                "BL01 Small JSON service",
+                "FR01 FR02",
+                "Root/health endpoints and rejection tests",
+                "Done"
+              ],
+              [
+                "BL02 IaC validation",
+                "FR03 SR08",
+                "Four templates, Guard fixtures and selected Checkov",
+                "Done"
+              ],
+              [
+                "BL03 Source/image scans",
+                "FR03 FR04 SR04",
+                "Semgrep rules and strict Trivy gates",
+                "Done"
+              ],
+              [
+                "BL04 Protected digest signing",
+                "FR05 SR03",
+                "SSM trust and real ECR signature",
+                "Done"
+              ],
+              [
+                "BL05 Separate trusted deploy",
+                "FR06 FR07 SR05",
+                "Same-run manifest and verification before mutation",
+                "Done"
+              ],
+              [
+                "BL06 Hardened runtime",
+                "FR08 SR06 SR07",
+                "Non-root read-only ECS and local container",
+                "Done"
+              ],
+              [
+                "BL07 Falco observation",
+                "FR09 SR09",
+                "Actual host warning delivered to CloudWatch",
+                "Done"
+              ],
+              [
+                "BL08 CodeBuild alternative",
+                "SR01 SR02",
+                "GitHub Actions with bounded OIDC roles",
+                "Done"
+              ],
+              [
+                "BL09 Local guide and evidence",
+                "FR10 NF04 NF06",
+                "PowerShell guide, snapshots and final report",
+                "Done"
+              ]
+            ],
+            "widths": [
+              1.65,
+              1.15,
+              3.5,
+              0.75
+            ]
+          }
+        ]
+      },
+      {
+        "title": "9.2 Future Work",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Proposed future improvements",
+            "headers": [
+              "Priority",
+              "Work item",
+              "Acceptance criterion"
+            ],
+            "rows": [
+              [
+                "High",
+                "Strengthen source approval and workflow review",
+                "Required review rules appropriate to repository plan"
+              ],
+              [
+                "High",
+                "Rotate and govern signing trust",
+                "Documented rotation/revocation with negative verification tests"
+              ],
+              [
+                "Medium",
+                "Retain independent durable audit trail",
+                "Reviewed cost/scope and verified ongoing audit delivery"
+              ],
+              [
+                "Medium",
+                "Expand IaC and SAST coverage",
+                "New controls/rules with rejection fixtures and reviewed findings"
+              ],
+              [
+                "Medium",
+                "Improve host availability and capacity",
+                "Measured resource/availability need and agreed cloud costs"
+              ],
+              [
+                "Medium",
+                "Hash-lock tool transitive dependencies",
+                "Reproducible install verified in fresh hosted runner"
+              ],
+              [
+                "Low",
+                "Add stronger build provenance",
+                "Bound provenance accepted by a reviewed deployment policy"
+              ]
+            ],
+            "widths": [
+              0.75,
+              2.4,
+              3.9
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "10 Implementation Changes",
+    "summary": "The final changes make GitHub Actions the active release system and preserve AWS runtime services and the local demonstration. File-level changes are mapped to the behavior they introduced so the repository can be reviewed without reconstructing the conversation.",
+    "sections": [
+      {
+        "title": "10.1 Architecture Migration",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": "The original retained pipeline uses CodePipeline and two CodeBuild projects. CodeBuild returned AccountLimitExceededException because concurrency was zero. The migration retains those resources as inactive reference, disables automatic source detection and the inbound build transition, and makes GitHub Actions the only active automatic deployment path."
+          },
+          {
+            "type": "figure",
+            "file": "legacy-codebuild.png",
+            "caption": "Supplied CodeBuild project list showing retained build and deploy projects rather than successful active builds"
+          }
+        ]
+      },
+      {
+        "title": "10.2 File Changes",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Changed files and resulting behavior",
+            "headers": [
+              "File",
+              "Final change",
+              "Reason"
+            ],
+            "rows": [
+              [
+                ".github/workflows/deploy.yml",
+                "Two jobs, main-only environments, OIDC, exact source artifacts, concurrency and current Node 24 action pins",
+                "Active CI without CodeBuild quota; remove deprecation warnings"
+              ],
+              [
+                "infra/generate.py and github.json",
+                "Generated OIDC provider and separate bounded GitHub roles",
+                "Explicit build/deploy trust and permission split"
+              ],
+              [
+                "infra/pipeline.json",
+                "DetectChanges false",
+                "Avoid legacy automatic builds alongside GitHub"
+              ],
+              [
+                "scripts/provision.py",
+                "GitHub stage and exact OIDC prefix configuration",
+                "Reviewable role-stack provisioning"
+              ],
+              [
+                "scripts/build-publish.sh",
+                "CI-neutral source/run identifiers and unique tags",
+                "Same signing path works from GitHub and retained legacy builds"
+              ],
+              [
+                "scripts/deploy.py",
+                "Release directory/source context for GitHub",
+                "Keep the original verifier before ECS mutations"
+              ],
+              [
+                "scripts/validate-iam.py",
+                "Configurable role suffixes including both GitHub roles",
+                "Validate actual eight-role policies and boundary"
+              ],
+              [
+                "scripts/security-gates.sh",
+                "Validate all four generated templates",
+                "Cover the added trust infrastructure"
+              ],
+              [
+                "scripts/install-tools.sh",
+                "Configurable tool output directory",
+                "Install tools without requiring system-path writes"
+              ],
+              [
+                "scripts/github_api.py",
+                "Credential Manager GitHub workflow control",
+                "Safe stop/resume coordinates active CI"
+              ],
+              [
+                "scripts/stop-demo.py and resume-demo.py",
+                "Disable/cancel/wait or enable/dispatch GitHub workflow",
+                "Prevent CI from restoring compute after intentional shutdown"
+              ],
+              [
+                "docs and deploy.example.json",
+                "Active CI/local commands and configuration fields",
+                "Repeatable operations and accurate scope"
+              ],
+              [
+                "docs/report-build and report-assets",
+                "Editable report content, diagrams and supplied screenshots",
+                "Maintainable academic deliverable"
+              ]
+            ],
+            "widths": [
+              2.0,
+              3.1,
+              1.95
+            ]
+          }
+        ]
+      },
+      {
+        "title": "10.3 Action Runtime Update",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": "The supplied successful run showed Node.js 20 deprecation annotations on older pinned actions. Those warnings were not failed security gates. The workflow now pins verified official releases using Node 24 directly. The updated workflow completed a fresh signed AWS deployment; report-only files are excluded from automatic deployment triggers."
+          },
+          {
+            "type": "table",
+            "title": "Verified action release pins",
+            "headers": [
+              "Action",
+              "Official release",
+              "Runtime"
+            ],
+            "rows": [
+              [
+                "checkout",
+                "v7.0.1",
+                "Node 24"
+              ],
+              [
+                "setup-python",
+                "v7.0.0",
+                "Node 24"
+              ],
+              [
+                "upload-artifact",
+                "v7.0.1",
+                "Node 24"
+              ],
+              [
+                "download-artifact",
+                "v8.0.1",
+                "Node 24"
+              ],
+              [
+                "configure-aws-credentials",
+                "v6.3.0",
+                "Node 24"
+              ]
+            ],
+            "widths": [
+              3.0,
+              2.0,
+              2.05
+            ]
+          }
+        ]
+      },
+      {
+        "title": "10.4 Repository and Workflow Evidence",
+        "blocks": [
+          {
+            "type": "figure",
+            "file": "github-repository.png",
+            "caption": "Supplied repository screenshot showing source layout and the documented migration commit"
+          },
+          {
+            "type": "figure",
+            "file": "github-runs.png",
+            "caption": "Supplied workflow history showing successful runs and one cancelled run"
+          },
+          {
+            "type": "paragraph",
+            "text": "A cancelled run is not counted as a successful release. The supplied history predates the action-runtime update. The latest verified workflow is {{RUN_ID}}, sourced from commit {{SOURCE}}. Its result and downloaded artifacts are the authoritative final release evidence."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "11 DevSecOps Testing and Deployment",
+    "summary": "Testing spans application behavior, infrastructure rules, source patterns, image findings, signature ordering and actual AWS deployment. Unit tests and live observations answer different questions and are presented separately.",
+    "sections": [
+      {
+        "title": "11.1 Container Hardening",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Application container controls",
+            "headers": [
+              "Control",
+              "Implemented value",
+              "Verification"
+            ],
+            "rows": [
+              [
+                "User",
+                "10001:10001",
+                "Task and local Docker inspection"
+              ],
+              [
+                "Root filesystem",
+                "Read-only",
+                "Configuration and write-rejection baseline test"
+              ],
+              [
+                "Linux capabilities",
+                "Drop ALL; no added app capabilities",
+                "Task verifier and runtime inspection"
+              ],
+              [
+                "Privileged mode",
+                "False",
+                "Guard, verifier and inspection"
+              ],
+              [
+                "Host mounts/namespaces",
+                "Prohibited for application",
+                "Verifier rejection tests"
+              ],
+              [
+                "AWS permissions",
+                "Application task role grants no AWS API permissions",
+                "Role inspection and IAM evidence"
+              ],
+              [
+                "Health check",
+                "HTTP /health with bounded timeout",
+                "Docker/ECS healthy status"
+              ],
+              [
+                "Application base",
+                "Pinned Python Alpine image digest",
+                "Dockerfile and Trivy report"
+              ]
+            ],
+            "widths": [
+              1.65,
+              2.65,
+              2.75
+            ]
+          }
+        ]
+      },
+      {
+        "title": "11.2 Preventive Gate Sequence",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Active workflow gates",
+            "headers": [
+              "Order",
+              "Gate",
+              "Required result"
+            ],
+            "rows": [
+              [
+                "1",
+                "Checkout exact source and install pinned tools",
+                "No floating action references or unchecked native downloads"
+              ],
+              [
+                "2",
+                "Unit tests and generated-template consistency",
+                "All 11 tests and consistency checks pass"
+              ],
+              [
+                "3",
+                "cfn-lint, selected Checkov and Guard fixtures",
+                "No schema/control failures; unsafe fixtures rejected"
+              ],
+              [
+                "4",
+                "Semgrep rules and annotated fixtures",
+                "No findings/errors in covered code"
+              ],
+              [
+                "5",
+                "Trivy filesystem scan",
+                "No detected HIGH/CRITICAL findings"
+              ],
+              [
+                "6",
+                "Assume build role and validate actual IAM",
+                "No ERROR or SECURITY_WARNING findings"
+              ],
+              [
+                "7",
+                "Build and scan image; generate SBOM",
+                "Strict CVE/secret gate passes"
+              ],
+              [
+                "8",
+                "ECR publish and exact-digest signing",
+                "Signed release manifest produced"
+              ],
+              [
+                "9",
+                "Separate-role verification and ECS stability",
+                "Trust/hardening/source pass; no rollback"
+              ]
+            ],
+            "widths": [
+              0.55,
+              2.65,
+              3.85
+            ]
+          }
+        ]
+      },
+      {
+        "title": "11.3 Unit and Negative Tests",
+        "blocks": [
+          {
+            "type": "figure",
+            "file": "unit-tests.png",
+            "caption": "Supplied test output showing the 11 successful application and deployment logic tests"
+          },
+          {
+            "type": "table",
+            "title": "Tests and the property each establishes",
+            "headers": [
+              "Test group",
+              "Cases",
+              "Evidence interpretation"
+            ],
+            "rows": [
+              [
+                "HTTP behavior",
+                "Health; unknown/traversal-shaped paths",
+                "Application integration tests against local test server"
+              ],
+              [
+                "Release identity",
+                "Invalid commit; wrong repository or malformed digest",
+                "Verifier input rejection"
+              ],
+              [
+                "Hardening",
+                "Privileged task or host mount",
+                "Task constraints rejected"
+              ],
+              [
+                "Signature ordering",
+                "Invalid signature never updates ECS",
+                "Mocked call-order test; no mutation before verification"
+              ],
+              [
+                "Positive deployment",
+                "Exact digest deployed after verification",
+                "Mocked deployment logic test"
+              ],
+              [
+                "Rollback detection",
+                "Service rollback is not success",
+                "Mocked ECS final-state rejection"
+              ],
+              [
+                "Provisioning",
+                "Explicit account/project; pinned sensor/zero bootstrap",
+                "Configuration and generated-template tests"
+              ]
+            ],
+            "widths": [
+              1.45,
+              2.7,
+              2.9
+            ]
+          },
+          {
+            "type": "paragraph",
+            "text": "The supplied terminal run reports 11 tests in 0.537 seconds with OK. Current hosted-run tests also passed. Mocked AWS tests validate the code path and ordering, while the successful live workflow validates real identity, registry signing and ECS integration. Neither is substituted for the other."
+          }
+        ]
+      },
+      {
+        "title": "11.4 Scanner Results",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Dated scanner results",
+            "headers": [
+              "Check",
+              "Observed outcome",
+              "Scope"
+            ],
+            "rows": [
+              [
+                "cfn-lint 1.57.1",
+                "All four templates pass",
+                "CloudFormation schema/lint"
+              ],
+              [
+                "Checkov 3.3.23",
+                "72 pass; 0 fail/skip/parsing errors",
+                "Explicitly selected controls"
+              ],
+              [
+                "Guard 3.2.1",
+                "Applicable rules pass; five unsafe fixtures rejected",
+                "Project infrastructure invariants"
+              ],
+              [
+                "Semgrep 1.179.0",
+                "0 findings and 0 errors; fixtures pass",
+                "Three checked-in Python rules"
+              ],
+              [
+                "Trivy 0.75.0",
+                "0 detected HIGH/CRITICAL image CVEs or secrets",
+                "Pinned image with current run database"
+              ],
+              [
+                "Access Analyzer",
+                "No errors or security warnings",
+                "Actual role identity policies and boundary"
+              ]
+            ],
+            "widths": [
+              1.6,
+              3.0,
+              2.45
+            ]
+          },
+          {
+            "type": "paragraph",
+            "text": "The first Debian base image had failed the strict CVE gate and was replaced with the pinned Alpine base. Rejected evidence was retained; the gate was not weakened. The current passing result is a dated observation, not a guarantee that future databases will remain clear."
+          }
+        ]
+      },
+      {
+        "title": "11.5 Live GitHub and AWS Results",
+        "blocks": [
+          {
+            "type": "figure",
+            "file": "github-success.png",
+            "caption": "Supplied earlier successful GitHub run 37438900114 before the Node 24 update"
+          },
+          {
+            "type": "table",
+            "title": "Latest verified cloud release",
+            "headers": [
+              "Field",
+              "Observed value"
+            ],
+            "rows": [
+              [
+                "Workflow",
+                "{{RUN_ID}} completed successfully"
+              ],
+              [
+                "Source",
+                "{{SOURCE}}"
+              ],
+              [
+                "Task definition",
+                "devsecops-demo:{{TASK_REVISION}}"
+              ],
+              [
+                "Image digest",
+                "{{DIGEST}}"
+              ],
+              [
+                "ECS state",
+                "One running HEALTHY app task, zero pending and completed rollout"
+              ],
+              [
+                "AWS region",
+                "ap-south-1 Mumbai"
+              ],
+              [
+                "Local runtime",
+                "devsecops-local remains healthy on localhost:8080"
+              ],
+              [
+                "Legacy CI",
+                "Automatic source detection and build transition disabled"
+              ]
+            ],
+            "widths": [
+              1.5,
+              5.55
+            ]
+          },
+          {
+            "type": "paragraph",
+            "text": "The supplied screenshot contains runtime deprecation warnings from older action versions. The final release uses the updated Node 24 pins. Exact source and digest come from the downloaded final release/deployment artifacts and are checked against current ECS configuration."
+          }
+        ]
+      },
+      {
+        "title": "11.6 Runtime Detection and Audit",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": "A harmless shell execution inside the AWS application produced an actual Falco Warning event. The event includes the application container identity and is stored in CloudWatch. Sensor inspection confirms active status, no OOM and zero restarts at the check. This establishes demonstrated detection for the chosen probe, not comprehensive coverage of all runtime attacks."
+          },
+          {
+            "type": "paragraph",
+            "text": "Falco detection differs from application isolation. The sensor needs host capabilities and Docker-socket access; the app does not receive them. CloudTrail Event History provides management API audit lookup, while a durable trail is future work. GitHub CI logs are retained in GitHub and are not described as native CodePipeline events."
+          }
+        ]
+      },
+      {
+        "title": "11.7 Deployment Readiness",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Readiness checklist",
+            "headers": [
+              "Item",
+              "State",
+              "Evidence"
+            ],
+            "rows": [
+              [
+                "Source and generated templates",
+                "Verified",
+                "Commit and consistency gate"
+              ],
+              [
+                "Scoped short-lived build/deploy access",
+                "Verified",
+                "Real OIDC assumptions and IAM checks"
+              ],
+              [
+                "Exact digest signed and verified",
+                "Verified",
+                "Release/deployment artifacts"
+              ],
+              [
+                "Negative verifier behavior",
+                "Verified",
+                "11 tests plus earlier wrong-key live probe"
+              ],
+              [
+                "AWS app health and hardening",
+                "Verified",
+                "Current ECS/host evidence"
+              ],
+              [
+                "Local app independence",
+                "Verified",
+                "Docker and HTTP health"
+              ],
+              [
+                "Runtime alert delivery",
+                "Verified",
+                "CloudWatch Falco events"
+              ],
+              [
+                "High availability and durable audit",
+                "Future work",
+                "Explicit baseline limitation"
+              ]
+            ],
+            "widths": [
+              2.7,
+              0.9,
+              3.45
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "title": "12 Traceability and Conclusion",
+    "summary": "The final implementation is tied to requirements through source files, specific test cases and actual release evidence. The report closes with operating guidance and a bounded statement of what this demonstration establishes.",
+    "sections": [
+      {
+        "title": "12.1 Requirement Traceability",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Requirements mapped to artifacts",
+            "headers": [
+              "Requirement",
+              "Implementation",
+              "Evidence"
+            ],
+            "rows": [
+              [
+                "FR01 FR02",
+                "app/server.py and tests/test_app.py",
+                "200 health and 404 rejection tests"
+              ],
+              [
+                "FR03 NF01 SR08",
+                "security gates and infra/*.json",
+                "Lint, Checkov, Guard, Semgrep and Trivy outputs"
+              ],
+              [
+                "FR04 FR05 SR03 SR04",
+                "build-publish.sh; Dockerfile; SSM/ECR",
+                "Trivy image report, SBOM and signed digest"
+              ],
+              [
+                "FR06 FR07 SR05",
+                "deploy.yml and deploy.py",
+                "Same-run manifest, signature-order tests and actual release"
+              ],
+              [
+                "FR08 SR06 SR07",
+                "runtime.json and task validation",
+                "HEALTHY ECS task and hardened runtime inspection"
+              ],
+              [
+                "FR09 SR09",
+                "Falco host rule and CloudWatch",
+                "Actual Warning event evidence"
+              ],
+              [
+                "FR10 NF06",
+                "Local Docker and PowerShell guide",
+                "Independent localhost response"
+              ],
+              [
+                "SR01 SR02",
+                "github.json and environment rules",
+                "Exact OIDC assumptions, policy validation and deny simulator"
+              ],
+              [
+                "NF04 NF05",
+                "Reports and release checks",
+                "Source/digest/task linkage and rollback rejection"
+              ]
+            ],
+            "widths": [
+              1.1,
+              3.15,
+              2.8
+            ]
+          }
+        ]
+      },
+      {
+        "title": "12.2 Submission Artifact Set",
+        "blocks": [
+          {
+            "type": "table",
+            "title": "Submission artifacts",
+            "headers": [
+              "Artifact",
+              "Location",
+              "Purpose"
+            ],
+            "rows": [
+              [
+                "Final academic report",
+                "deliverables/AWS_DevSecOps_Capstone_Report_Final.docx",
+                "Requirements, models, changes and evidence"
+              ],
+              [
+                "Editable report content",
+                "docs/report-build/",
+                "Maintain and rebuild subject-specific report"
+              ],
+              [
+                "Screenshots and diagrams",
+                "docs/report-assets/",
+                "Supplied observations and engineering models"
+              ],
+              [
+                "Source repository",
+                "github.com/MAvinash24/aws",
+                "Active workflow and implementation"
+              ],
+              [
+                "Local command guide",
+                "docs/LOCAL-RUN-POWERSHELL.md",
+                "Copyable local operating commands"
+              ],
+              [
+                "Change summary",
+                "docs/FINAL-IMPLEMENTATION-CHANGES.md",
+                "GitHub, AWS CLI and Docker changes"
+              ],
+              [
+                "Live evidence",
+                "reports/ and dist/aws-live-evidence.zip",
+                "Machine-specific verified observations"
+              ],
+              [
+                "Source package",
+                "dist/aws-devsecops-source.zip",
+                "Source without local credentials/secrets"
+              ]
+            ],
+            "widths": [
+              1.65,
+              3.1,
+              2.3
+            ]
+          }
+        ]
+      },
+      {
+        "title": "12.3 Conclusion",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": "The project demonstrates a complete scan, build, sign, verify and deploy chain using GitHub Actions and AWS runtime services. CodeBuild capacity no longer blocks this active path. The verified AWS task runs a content-addressed image under constrained application permissions, Falco produces an observed runtime warning, and the local hardened service remains available independently."
+          },
+          {
+            "type": "paragraph",
+            "text": "The evidence supports this educational baseline. Selected scanner coverage, private keyed signing, short retention, trusted administrators and a single small host remain explicit limits. Further production work should strengthen governance, provenance, retained audit and availability while preserving the existing fail-closed deployment checks."
+          }
+        ]
+      },
+      {
+        "title": "12.4 Primary References",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": "Implementation evidence is the repository, the linked workflow, downloaded artifacts and current runtime snapshots. The following primary documentation supports the service and control semantics; it does not substitute for project-specific proof."
+          },
+          {
+            "type": "paragraph",
+            "text": "GitHub OIDC with AWS: https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws"
+          },
+          {
+            "type": "paragraph",
+            "text": "AWS CodeBuild quotas: https://docs.aws.amazon.com/codebuild/latest/userguide/limits.html"
+          },
+          {
+            "type": "paragraph",
+            "text": "Amazon ECS task and container security: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/security-tasks-containers.html"
+          },
+          {
+            "type": "paragraph",
+            "text": "Cosign signature verification: https://docs.sigstore.dev/cosign/verifying/verify/"
+          },
+          {
+            "type": "paragraph",
+            "text": "Latest verified project workflow: https://github.com/MAvinash24/aws/actions/runs/{{RUN_ID}}"
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -70,7 +70,7 @@ Both the AWS application and independent local Docker application remain running
 
 Reports include `reports/deployment.json`, `reports/bootstrap-release-summary.json`, `reports/trivy-image-bootstrap.json`, `reports/sbom-bootstrap.cdx.json`, `reports/iam-validation.json`, `reports/ecr-immutable-overwrite-live.json`, `reports/ecr-basic-scan-live.json`, `reports/wrong-signature-live.json`, `reports/application-health-hardening-live.json`, `reports/falco-application-alert-live.json`, `reports/eventbridge-delivery-live.json`, `reports/codebuild-quota-request-status.json`, and per-stack drift results.
 
-## Successful GitHub Actions release
+## Initial successful GitHub Actions release
 
 [Run 37436946485](https://github.com/MAvinash24/aws/actions/runs/37436946485) completed with **success** for source `5a7723206201d0287082b8b12258b5e81eeb8947`. Both **Scan, build and sign** and **Verify and deploy to ECS** passed, including every security gate, real OIDC role assumption, deployed IAM policy validation, ECR publish/signing, trusted-key verification and ECS stability checks.
 
@@ -79,3 +79,13 @@ The verified image is `285150348444.dkr.ecr.ap-south-1.amazonaws.com/devsecops-d
 AWS IAM simulation denied `ecs:UpdateService` for the GitHub build role and denied private-signing-key reads for the GitHub deploy role. The exact immutable repository/environment subjects and `sts.amazonaws.com` audience successfully authenticated both roles; environment branch rules allow only `main`. No stored AWS access keys were added to GitHub.
 
 Run logs and all three release/build/deployment artifacts are available in GitHub Actions for seven days, with downloaded copies under `reports/github-run-37436946485/`. Additional local evidence includes `reports/github-oidc-configuration.json`, `reports/github-role-separation-live.json` and `reports/github-host-health.json` and `reports/github-falco-alert.json`. Documentation-only pushes do not redeploy.
+
+## Final release after action runtime update
+
+[Run 37443610115](https://github.com/MAvinash24/aws/actions/runs/37443610115) completed successfully for source `611b9ffc42a6671ff8778489f1ca8aa37f793823`. Both build and deploy check-runs report **zero annotations**. Verified official action releases run Node 24 natively; older Node.js 20 deprecation warnings shown in the supplied screenshots are resolved.
+
+The verified digest is `sha256:6892e992a1ed76adc04b4783f1ac1248b1aa4e388bae4dac026b27c64b2cc58b`, deployed as `devsecops-demo:5`. AWS CLI 2.37.9 and SDK observations confirm one running healthy task, zero pending and stable rollout. Current host health/hardening checks pass, Falco remains active without OOM/restarts, and a fresh new-task shell probe produced a Warning delivered to CloudWatch. The independent local Docker app remains running and healthy.
+
+The report distinguishes the supplied local test run of 11 tests in 0.537 seconds, negative/mock deployment logic tests, actual CI evidence and live runtime observations. The latest source/image scans and actual IAM policy checks passed without weakening their gates. Downloaded final evidence is under `reports/github-run-37443610115/`; check-run annotations are saved in `reports/final-workflow-annotations.json`.
+
+See [final changes](FINAL-IMPLEMENTATION-CHANGES.md) for the file mapping, AWS CLI path/commands and local Docker checks. The academic report is `deliverables/AWS_DevSecOps_Capstone_Report_Final.docx`; its screenshots showing earlier runs are explicitly captioned as historical evidence.

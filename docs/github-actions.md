@@ -4,13 +4,13 @@ GitHub Actions is the active CI/CD system for [MAvinash24/aws](https://github.co
 
 ## Run an AWS release
 
-Push application, infrastructure, security or workflow changes to `main`. Alternatively open [Actions](https://github.com/MAvinash24/aws/actions/workflows/deploy.yml), select **Run workflow**, choose `main`, and run it. Documentation-only pushes are excluded. A successful release requires both **Scan, build and sign** and **Verify and deploy to ECS** to pass.
+Push application, infrastructure, security or workflow changes to `main`. Alternatively open [Actions](https://github.com/MAvinash24/aws/actions/workflows/deploy.yml), select **Run workflow**, choose `main`, and run it. README, docs and deliverables-only pushes are excluded. A successful release requires both **Scan, build and sign** and **Verify and deploy to ECS** to pass.
 
 The build job runs tests, generated-template checks, cfn-lint, selected Checkov controls, Guard and its rejection fixtures, Semgrep and its fixtures, and Trivy filesystem scanning. It then assumes the scoped build role, validates actual IAM policies, builds/scans the container, creates a CycloneDX SBOM, pushes an immutable ECR tag and signs its exact digest using the existing SSM key.
 
 The deployment job has a separate role and runner. It downloads the manifest from the same workflow run, checks the source SHA and ECR repository/digest, fetches only the trusted public key, verifies the signature and task hardening, registers the verified digest and waits for ECS stability. A failed check or rollback fails the job.
 
-Actions have pinned commit SHAs, security tools have pinned direct versions, and native tool downloads are checksum-verified. Reports and the release manifest are Actions artifacts retained for seven days; download evidence you need to keep longer. No signing private key or password is uploaded. Production workflow concurrency is one; an existing deployment is not automatically cancelled by a new push.
+Actions use verified official Node 24 releases with pinned commit SHAs, security tools have pinned direct versions, and native tool downloads are checksum-verified. Reports and the release manifest are Actions artifacts retained for seven days; download evidence you need to keep longer. No signing private key or password is uploaded. Production workflow concurrency is one; an existing deployment is not automatically cancelled by a new push.
 
 ## AWS and GitHub setup
 

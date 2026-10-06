@@ -1,0 +1,13 @@
+{
+  "pages": 27,
+  "chapters": 12,
+  "tables": 30,
+  "figures": 13,
+  "required_identities_present": true,
+  "reference_unchanged": true,
+  "invalid_relationships": [],
+  "native_renderer": "Microsoft Word 16",
+  "reference_geometry_retained": true,
+  "latest_workflow_run": 37443610115,
+  "visual_review": "All 27 pages reviewed; corrected diagram labels and routes verified in the final native Word render."
+}
